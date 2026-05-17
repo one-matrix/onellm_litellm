@@ -102,3 +102,5 @@ STABILIZATION_TODO.md
 **/coverage
 test-config
 .vscode
+
+litellm/proxy/_experimental/*

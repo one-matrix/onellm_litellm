@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Union
 
 import litellm
@@ -42,7 +43,13 @@ from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
 from litellm.secret_managers.main import get_secret_str
 from litellm.types.media.main import MediaAsset, MediaResponse
 
-__all__ = ["amedia_generation", "media_generation"]
+__all__ = [
+    "amedia_generation",
+    "asubmit_media_task",
+    "build_media_response_from_status",
+    "media_generation",
+    "MediaSubmitResult",
+]
 
 MediaType = Literal["image", "video", "audio", "tts", "music"]
 
@@ -374,6 +381,144 @@ async def amedia_generation(
         bare_model=bare_model,
         media_type=media_type,
         price_markup=float(effective_markup or 1.0),
+    )
+
+
+@dataclass
+class MediaSubmitResult:
+    """Result of a submit-only call (no polling).
+
+    Carries everything a caller needs to either (a) hand the task_id back
+    to a client for later polling, or (b) call ``apoll`` + the response
+    builder themselves to assemble the final ``MediaResponse``.
+    """
+
+    task_id: int
+    model: str  # provider-prefixed (e.g. "ai6700/grok-video-3")
+    bare_model: str  # provider stripped
+    media_type: str
+    body: Dict[str, Any] = field(default_factory=dict)  # the JSON sent to AI6700
+    price_markup: float = 1.0
+    api_base: str = ""
+    api_key: str = ""
+    model_info: Optional[Dict[str, Any]] = None
+
+
+async def asubmit_media_task(
+    model: str,
+    prompt: str,
+    *,
+    type: Optional[MediaType] = None,
+    params: Optional[Dict[str, Any]] = None,
+    count: Optional[int] = None,
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+    price_markup: Optional[float] = None,
+    client: Optional[AsyncHTTPHandler] = None,
+    **kwargs: Any,
+) -> MediaSubmitResult:
+    """Submit-only counterpart of :func:`amedia_generation`.
+
+    Goes through the same resolution chain (media_type, config, body
+    mapping, credentials) but stops after the ``/v1/media/generate`` POST —
+    no polling, no response builder. Use this when the caller wants to
+    own the polling cadence (e.g. proxy returns 202 + task_id, clients
+    poll via ``GET /v1/media/tasks/{task_id}``).
+
+    All resolution metadata is returned in :class:`MediaSubmitResult` so
+    follow-up calls (status check, settlement) don't have to re-resolve.
+    """
+    _, custom_llm_provider, _, _ = get_llm_provider(model=model)
+    if custom_llm_provider != "ai6700":
+        raise AI6700Error(
+            status_code=400,
+            message=(
+                f"asubmit_media_task: model {model!r} resolves to provider "
+                f"{custom_llm_provider!r}, expected 'ai6700'."
+            ),
+        )
+
+    model_info = _safe_get_model_info(model)
+    media_type = _resolve_media_type(
+        model=model, explicit_type=type, model_info=model_info
+    )
+    config, _modality_label = _pick_config(media_type)
+
+    resolved_api_key = _resolve_api_key(api_key)
+    resolved_api_base = _resolve_api_base(api_base)
+    effective_markup = (
+        price_markup
+        if price_markup is not None
+        else (model_info or {}).get("price_markup", 1.0)
+    )
+
+    headers = config.validate_environment(
+        headers=dict(extra_headers or {}),
+        model=model,
+        api_key=resolved_api_key,
+        litellm_params=None,
+    )
+
+    body = _build_body_and_count(
+        config=config,
+        model=model,
+        prompt=prompt,
+        params=params,
+        count=count,
+        optional_params=kwargs,
+    )
+
+    owns_client = False
+    if client is None:
+        client = AsyncHTTPHandler(timeout=AI6700_DEFAULT_TIMEOUT)
+        owns_client = True
+    try:
+        task_id = await AI6700Helper.asubmit(
+            client,
+            api_base=resolved_api_base,
+            api_key=resolved_api_key,
+            body=body,
+            extra_headers={"Authorization": headers["Authorization"]},
+        )
+    finally:
+        if owns_client:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+    return MediaSubmitResult(
+        task_id=task_id,
+        model=model,
+        bare_model=config.strip_provider_prefix(model),
+        media_type=media_type,
+        body=body,
+        price_markup=float(effective_markup or 1.0),
+        api_base=resolved_api_base,
+        api_key=resolved_api_key,
+        model_info=model_info,
+    )
+
+
+def build_media_response_from_status(
+    *,
+    status: AI6700TaskStatus,
+    bare_model: str,
+    media_type: str,
+    price_markup: float,
+) -> MediaResponse:
+    """Public re-export of the response builder.
+
+    Lets the proxy's status endpoint reuse the same ``MediaResponse``
+    shape that ``amedia_generation`` returns, instead of hand-rolling
+    a duplicate construction.
+    """
+    return _build_media_response(
+        status=status,
+        bare_model=bare_model,
+        media_type=media_type,
+        price_markup=price_markup,
     )
 
 
