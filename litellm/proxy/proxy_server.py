@@ -330,6 +330,7 @@ from litellm.proxy.hooks.prompt_injection_detection import (
 )
 from litellm.proxy.hooks.proxy_track_cost_callback import _ProxyDBLogger
 from litellm.proxy.image_endpoints.endpoints import router as image_router
+from litellm.proxy.media_endpoints.endpoints import router as media_router
 from litellm.proxy.litellm_pre_call_utils import add_litellm_data_to_request
 from litellm.proxy.management_endpoints.budget_management_endpoints import (
     router as budget_management_router,
@@ -15328,6 +15329,7 @@ app.include_router(video_router)
 app.include_router(container_router)
 app.include_router(search_router)
 app.include_router(image_router)
+app.include_router(media_router)
 app.include_router(fine_tuning_router)
 app.include_router(credential_router)
 app.include_router(llm_passthrough_router)
