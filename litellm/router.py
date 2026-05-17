@@ -222,6 +222,101 @@ class RoutingArgs(enum.Enum):
     ttl = 60  # 1min (RPM/TPM expire key)
 
 
+# Keys forwarded from a deployment's ``litellm_params`` into
+# ``litellm.amedia_generation``. Restricted to credential/transport fields —
+# cost-tracking fields (``input_cost_per_token`` et al.) must not leak into the
+# upstream request body via ``map_openai_params``.
+_AMEDIA_LITELLM_PARAM_KEYS = frozenset(
+    {"api_base", "api_key", "timeout", "poll_interval", "extra_headers"}
+)
+
+# Router-internal kwargs to strip before forwarding to ``amedia_generation``.
+# Unknown keys are deliberately *not* dropped — the AI6700 transformation
+# configs forward unrecognised openai-style params (``ratio``, ``aspect_ratio``,
+# ``audio_duration``, ...) directly into the upstream ``params`` dict, and
+# this Router path must preserve that contract.
+_AMEDIA_REQUEST_KWARG_DROP = frozenset(
+    {
+        "model",
+        "prompt",
+        "messages",
+        "metadata",
+        "litellm_call_id",
+        "litellm_trace_id",
+        "litellm_logging_obj",
+        "litellm_metadata",
+        "original_function",
+        "num_retries",
+        "model_info",
+        "model_group",
+        "model_group_alias",
+        "request_kwargs",
+        "caching",
+        "specific_deployment",
+        "mock_response",
+        "mock_testing_fallbacks",
+        "mock_testing_context_fallbacks",
+        "mock_testing_content_policy_fallbacks",
+        "fastest_response",
+        "proxy_server_request",
+        "shared_session",
+        "priority",
+        "cooldown_time",
+    }
+)
+
+_AMEDIA_REQUEST_KWARG_DROP_PREFIXES = ("litellm_", "proxy_", "user_api_key")
+
+_AI6700_MODE_TO_MEDIA_TYPE = {
+    "image_generation": "image",
+    "video_generation": "video",
+    "audio_speech": "audio",
+}
+
+
+def _build_amedia_forward_kwargs(
+    *,
+    deployment_params: Dict[str, Any],
+    deployment_model_info: Dict[str, Any],
+    request_kwargs: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Assemble kwargs to forward to ``litellm.amedia_generation``.
+
+    Combines (in increasing precedence):
+      1. allowlisted credential/transport keys from the deployment's
+         ``litellm_params`` (cost fields and other internals are dropped).
+      2. ``type`` / ``price_markup`` derived from ``model_info`` so callers
+         using a proxy ``model_name`` alias don't have to also register the
+         model in ``litellm.model_cost``.
+      3. inbound request kwargs minus the router/proxy-internal plumbing
+         enumerated in ``_AMEDIA_REQUEST_KWARG_DROP``.
+    """
+    forward: Dict[str, Any] = {
+        k: v for k, v in deployment_params.items() if k in _AMEDIA_LITELLM_PARAM_KEYS
+    }
+
+    if "type" not in request_kwargs:
+        media_type = deployment_model_info.get("ai6700_media_type")
+        if not media_type:
+            media_type = _AI6700_MODE_TO_MEDIA_TYPE.get(
+                deployment_model_info.get("mode")
+            )
+        if media_type:
+            forward["type"] = media_type
+
+    if "price_markup" not in request_kwargs and "price_markup" in deployment_model_info:
+        forward["price_markup"] = deployment_model_info["price_markup"]
+
+    for key, value in request_kwargs.items():
+        if key in _AMEDIA_REQUEST_KWARG_DROP:
+            continue
+        if any(key.startswith(p) for p in _AMEDIA_REQUEST_KWARG_DROP_PREFIXES):
+            continue
+        forward[key] = value
+
+    return forward
+
+
 class Router:
     model_names: set = set()
     cache_responses: Optional[bool] = False
@@ -3458,6 +3553,103 @@ class Router:
         except Exception as e:
             verbose_router_logger.info(
                 f"litellm.aimage_generation(model={model_name})\033[31m Exception {str(e)}\033[0m"
+            )
+            if model_name is not None:
+                self.fail_calls[model_name] += 1
+            raise e
+
+    async def amedia_generation(self, prompt: str, model: str, **kwargs):
+        """Router entry point for ``/v1/media/generations`` (AI6700 poll-then-URL flow).
+
+        Mirrors :meth:`aimage_generation`: applies fallbacks/retries and
+        delegates to :meth:`_amedia_generation` which resolves the deployment
+        and calls :func:`litellm.amedia_generation`.
+        """
+        try:
+            kwargs["model"] = model
+            kwargs["prompt"] = prompt
+            kwargs["original_function"] = self._amedia_generation
+            kwargs["num_retries"] = kwargs.get("num_retries", self.num_retries)
+            self._update_kwargs_before_fallbacks(model=model, kwargs=kwargs)
+            response = await self.async_function_with_fallbacks(**kwargs)
+
+            return response
+        except Exception as e:
+            asyncio.create_task(
+                send_llm_exception_alert(
+                    litellm_router_instance=self,
+                    request_kwargs=kwargs,
+                    error_traceback_str=traceback.format_exc(),
+                    original_exception=e,
+                )
+            )
+            raise e
+
+    async def _amedia_generation(self, prompt: str, model: str, **kwargs):
+        model_name = model
+        try:
+            verbose_router_logger.debug(
+                f"Inside _media_generation()- model: {model}; kwargs: {kwargs}"
+            )
+            parent_otel_span = _get_parent_otel_span_from_kwargs(kwargs)
+            deployment = await self.async_get_available_deployment(
+                model=model,
+                messages=[{"role": "user", "content": "prompt"}],
+                specific_deployment=kwargs.pop("specific_deployment", None),
+                request_kwargs=kwargs,
+            )
+            self._update_kwargs_with_deployment(deployment=deployment, kwargs=kwargs)
+
+            data = deployment["litellm_params"].copy()
+            model_name = data["model"]
+            deployment_model_info = deployment.get("model_info") or {}
+
+            forward_kwargs = _build_amedia_forward_kwargs(
+                deployment_params=data,
+                deployment_model_info=deployment_model_info,
+                request_kwargs=kwargs,
+            )
+
+            self.total_calls[model_name] += 1
+            response_coro = litellm.amedia_generation(
+                model=model_name,
+                prompt=prompt,
+                **forward_kwargs,
+            )
+
+            ### CONCURRENCY-SAFE RPM CHECKS ###
+            rpm_semaphore = self._get_client(
+                deployment=deployment,
+                kwargs=kwargs,
+                client_type="max_parallel_requests",
+            )
+
+            if rpm_semaphore is not None and isinstance(
+                rpm_semaphore, asyncio.Semaphore
+            ):
+                async with rpm_semaphore:
+                    """
+                    - Check rpm limits before making the call
+                    - If allowed, increment the rpm limit (allows global value to be updated, concurrency-safe)
+                    """
+                    await self.async_routing_strategy_pre_call_checks(
+                        deployment=deployment, parent_otel_span=parent_otel_span
+                    )
+                    response = await response_coro
+            else:
+                await self.async_routing_strategy_pre_call_checks(
+                    deployment=deployment, parent_otel_span=parent_otel_span
+                )
+                response = await response_coro
+
+            self.success_calls[model_name] += 1
+            verbose_router_logger.info(
+                f"litellm.amedia_generation(model={model_name})\033[32m 200 OK\033[0m"
+            )
+            return response
+        except Exception as e:
+            verbose_router_logger.info(
+                f"litellm.amedia_generation(model={model_name})\033[31m Exception {str(e)}\033[0m"
             )
             if model_name is not None:
                 self.fail_calls[model_name] += 1

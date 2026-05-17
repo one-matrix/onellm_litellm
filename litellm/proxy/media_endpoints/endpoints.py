@@ -13,7 +13,7 @@ response headers all behave the same as ``/v1/images/generations``.
 
 import re
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import orjson
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -24,6 +24,7 @@ from litellm._logging import verbose_proxy_logger
 from litellm.proxy._types import ProxyException
 from litellm.proxy.auth.user_api_key_auth import UserAPIKeyAuth, user_api_key_auth
 from litellm.proxy.common_request_processing import ProxyBaseLLMRequestProcessing
+from litellm.proxy.route_llm_request import route_request
 
 router = APIRouter()
 
@@ -77,46 +78,6 @@ def _channel_view(deployment: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-_AMEDIA_FORWARD_KEYS = {
-    "type",
-    "params",
-    "count",
-    "timeout",
-    "poll_interval",
-    "api_key",
-    "api_base",
-    "extra_headers",
-    "price_markup",
-    # openai-style optional params auto-mapped per modality
-    "size",
-    "seconds",
-    "input_reference",
-    "image",
-    "image_url",
-    "voice",
-    "speed",
-    "response_format",
-    "n",
-    "num_images",
-    "parameters",
-    "user",
-}
-
-
-def _extract_kwargs(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Pick the subset of request body fields that ``amedia_generation`` understands.
-
-    Unknown keys (e.g. ``aspect_ratio``, ``ratio``, ``model_version``,
-    ``emotion``, ``audio_duration``, ...) are deliberately also forwarded —
-    they pass through ``config.map_openai_params`` and end up in the AI6700
-    ``params`` dict. We only strip framework-internal keys like ``model`` /
-    ``prompt`` (already top-level) and ``litellm_*`` plumbing.
-    """
-    drop = {"model", "prompt", "messages", "metadata"}
-    drop |= {k for k in data if k.startswith("litellm_") or k.startswith("proxy_")}
-    return {k: v for k, v in data.items() if k not in drop}
-
-
 @router.post(
     "/v1/media/generations",
     dependencies=[Depends(user_api_key_auth)],
@@ -153,6 +114,7 @@ async def media_generations(
     from litellm.proxy.proxy_server import (
         add_litellm_data_to_request,
         general_settings,
+        llm_router,
         proxy_config,
         proxy_logging_obj,
         user_model,
@@ -183,8 +145,17 @@ async def media_generations(
                 status_code=400,
                 detail="media/generations: 'model' is required",
             )
+        # Two-stage alias resolution — mirrors chat/completions
+        # (common_request_processing.common_processing_pre_call_logic):
+        #   1. global litellm.model_alias_map
+        #   2. per-key aliases from the caller's API key
+        # The router's model_name → litellm_params.model translation runs
+        # afterwards inside route_request.
         if resolved_model in litellm.model_alias_map:
             resolved_model = litellm.model_alias_map[resolved_model]
+        key_aliases = getattr(user_api_key_dict, "aliases", None)
+        if isinstance(key_aliases, dict) and resolved_model in key_aliases:
+            resolved_model = key_aliases[resolved_model]
         data["model"] = resolved_model
 
         prompt = data.get("prompt")
@@ -202,12 +173,17 @@ async def media_generations(
             call_type="image_generation",
         )
 
-        kwargs = _extract_kwargs(data)
-        response = await litellm.amedia_generation(
-            model=resolved_model,
-            prompt=data["prompt"],
-            **kwargs,
+        # Route through llm_router so ``model_name`` aliases in proxy config
+        # (e.g. ``kwvideo-v2`` → ``ai6700/kwvideo-v2``) resolve to the
+        # provider-prefixed model string that ``amedia_generation`` requires.
+        llm_call = await route_request(
+            data=data,
+            route_type="amedia_generation",
+            llm_router=llm_router,
+            user_model=user_model,
+            user_api_key_dict=user_api_key_dict,
         )
+        response = await llm_call
 
         # Standard proxy post-call hook
         response = await proxy_logging_obj.post_call_success_hook(
