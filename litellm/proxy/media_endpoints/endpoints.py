@@ -11,8 +11,9 @@ The endpoint goes through litellm's standard proxy lifecycle
 response headers all behave the same as ``/v1/images/generations``.
 """
 
+import re
 import traceback
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import orjson
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -25,6 +26,55 @@ from litellm.proxy.auth.user_api_key_auth import UserAPIKeyAuth, user_api_key_au
 from litellm.proxy.common_request_processing import ProxyBaseLLMRequestProcessing
 
 router = APIRouter()
+
+# Trailing "-tierN" (N integer) marks a per-channel-group variant of the
+# same logical model. The base name is what callers send in /v1/media/generations.
+_TIER_SUFFIX_RE = re.compile(r"-tier\d+$")
+
+
+def _strip_tier(model_name: str) -> str:
+    """Drop the ``-tierN`` suffix so deployments can be grouped by base name."""
+    return _TIER_SUFFIX_RE.sub("", model_name)
+
+
+def _is_media_deployment(deployment: Dict[str, Any]) -> bool:
+    """A deployment counts as 'media' iff ``model_info.ai6700_media_type`` is set.
+
+    We deliberately do not fall back to ``mode`` here — the media endpoints
+    are AI6700-shaped (poll-then-URL), and ``mode`` alone (e.g. ``image_generation``)
+    doesn't guarantee the deployment is on that async-poll surface.
+    """
+    info = deployment.get("model_info") or {}
+    return bool(info.get("ai6700_media_type"))
+
+
+def _list_media_deployments() -> List[Dict[str, Any]]:
+    """All media-capable deployments from the router. Empty list if no router."""
+    from litellm.proxy.proxy_server import llm_router
+
+    if llm_router is None:
+        return []
+    deployments = llm_router.get_model_list() or []
+    return [d for d in deployments if _is_media_deployment(d)]
+
+
+def _channel_view(deployment: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-channel pricing view (one row per registered tier deployment)."""
+    info = deployment.get("model_info") or {}
+    return {
+        "name": deployment.get("model_name"),
+        "channel_group": info.get("channel_group"),
+        "billing_method": info.get("billing_method"),
+        "is_active": info.get("is_active"),
+        "base_price": info.get("base_price"),
+        "cost_per_second": info.get("cost_per_second"),
+        "input_token_price": info.get("input_token_price"),
+        "output_token_price": info.get("output_token_price"),
+        "option_prices": info.get("option_prices"),
+        "price_markup": info.get("price_markup"),
+        "success_rate_24h": info.get("success_rate_24h"),
+        "avg_response_seconds": info.get("avg_response_seconds"),
+    }
 
 
 _AMEDIA_FORWARD_KEYS = {
@@ -247,3 +297,117 @@ async def media_task_status(
             await client.close()
         except Exception:
             pass
+
+
+@router.get(
+    "/v1/media/models",
+    dependencies=[Depends(user_api_key_auth)],
+    response_class=ORJSONResponse,
+    tags=["media"],
+)
+async def media_models_list(
+    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+):
+    """List media models registered on this proxy, deduplicated by base name.
+
+    Source of truth is the local ``model_list`` (config.yaml or DB). Tier
+    deployments (``foo``, ``foo-tier1``, ``foo-tier2``...) collapse into one
+    entry per base name; ``channel_count`` exposes how many are registered.
+    """
+    deployments = _list_media_deployments()
+
+    by_base: Dict[str, Dict[str, Any]] = {}
+    for dep in deployments:
+        name = dep.get("model_name") or ""
+        base = _strip_tier(name)
+        info = dep.get("model_info") or {}
+        entry = by_base.setdefault(
+            base,
+            {
+                "name": base,
+                "display_name": info.get("display_name"),
+                "type": info.get("ai6700_media_type"),
+                "mode": info.get("mode"),
+                "channel_count": 0,
+            },
+        )
+        # Prefer the bare-name deployment's display_name/mode if it exists.
+        if name == base:
+            entry["display_name"] = info.get("display_name") or entry["display_name"]
+            entry["mode"] = info.get("mode") or entry["mode"]
+        entry["channel_count"] += 1
+
+    data = sorted(by_base.values(), key=lambda e: e["name"])
+    return {"object": "list", "data": data}
+
+
+@router.get(
+    "/v1/media/models/{model}/pricing",
+    dependencies=[Depends(user_api_key_auth)],
+    response_class=ORJSONResponse,
+    tags=["media"],
+)
+async def media_model_pricing(
+    model: str,
+    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+):
+    """All registered tier deployments for ``model`` with their pricing fields.
+
+    404s if no deployment with that base name is registered as a media model.
+    """
+    deployments = _list_media_deployments()
+    matching = [
+        d for d in deployments if _strip_tier(d.get("model_name") or "") == model
+    ]
+    if not matching:
+        raise HTTPException(
+            status_code=404,
+            detail=f"media model {model!r} not registered on this proxy",
+        )
+
+    # Sort: bare name first, then tier1, tier2... lexicographically.
+    matching.sort(
+        key=lambda d: (d.get("model_name") != model, d.get("model_name") or "")
+    )
+    info = matching[0].get("model_info") or {}
+    return {
+        "model": model,
+        "type": info.get("ai6700_media_type"),
+        "channels": [_channel_view(d) for d in matching],
+    }
+
+
+@router.get(
+    "/v1/media/models/{model}",
+    dependencies=[Depends(user_api_key_auth)],
+    response_class=ORJSONResponse,
+    tags=["media"],
+)
+async def media_model_detail(
+    model: str,
+    user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
+):
+    """Single media model's metadata from the local registry.
+
+    Returns the bare-name deployment if present, otherwise the first tier
+    found. 404 if no registered media model matches.
+    """
+    deployments = _list_media_deployments()
+    bare = next((d for d in deployments if (d.get("model_name") or "") == model), None)
+    tiered = next(
+        (d for d in deployments if _strip_tier(d.get("model_name") or "") == model),
+        None,
+    )
+    deployment = bare or tiered
+    if deployment is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"media model {model!r} not registered on this proxy",
+        )
+
+    info = dict(deployment.get("model_info") or {})
+    params = deployment.get("litellm_params") or {}
+    info["name"] = model
+    info["type"] = info.get("ai6700_media_type")
+    info["litellm_model"] = params.get("model")
+    return info
