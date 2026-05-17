@@ -19,9 +19,12 @@ from litellm.proxy.credit_service.estimator import (
     EstimateResult,
     estimate_media_credits,
 )
+from litellm.proxy.credit_service.callbacks import WalletChargeLogger
 from litellm.proxy.credit_service.wallet import (
     WalletError,
+    charge,
     ensure_wallet,
+    get_balance,
     pre_deduct,
     rebind_agent_record_id,
     refund,
@@ -34,8 +37,11 @@ __all__ = [
     "estimate_media_credits",
     "WalletError",
     "ensure_wallet",
+    "get_balance",
+    "charge",
     "pre_deduct",
     "rebind_agent_record_id",
     "settle",
     "refund",
+    "WalletChargeLogger",
 ]

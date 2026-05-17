@@ -17,6 +17,8 @@ import pytest
 from litellm.exceptions import BudgetExceededError
 from litellm.proxy.credit_service import wallet as wallet_mod
 from litellm.proxy.credit_service.wallet import (
+    charge,
+    get_balance,
     pre_deduct,
     rebind_agent_record_id,
     refund,
@@ -380,3 +382,141 @@ async def test_rebind_swaps_placeholder_to_real_id(fake_prisma):
     assert any(t["tx_type"] == "pre_deduct" for t in rebound)
     # Nothing left under the placeholder
     assert _txs(fake_prisma, "pending:abc") == []
+
+
+# ----------------------------------------------------------------------
+# charge — sync deduct used by chat / sync media callback
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_charge_drains_gift_first_then_paid(fake_prisma):
+    await _seed_wallet(fake_prisma, gift=3.0, paid=100.0)
+    result = await charge(
+        tenant_id="team-1",
+        actual_credits=5.0,
+        agent_record_id="chat-1",
+        model_name="gpt-4o",
+    )
+    assert result["charged"] is True
+    assert result["gift_deduct"] == 3.0
+    assert result["paid_deduct"] == 2.0
+    wallet = fake_prisma.db.wallets[0]
+    assert wallet["gift_balance"] == 0.0
+    assert wallet["paid_balance"] == 98.0
+    assert wallet["total_consumed"] == 5.0
+    assert wallet["frozen_amount"] == 0.0  # untouched — no freeze
+    # Two tx rows (gift + paid consumption)
+    rows = _txs(fake_prisma, "chat-1")
+    assert len(rows) == 2
+    assert {r["wallet_type"] for r in rows} == {"gift", "paid"}
+
+
+@pytest.mark.asyncio
+async def test_charge_idempotent_when_agent_record_id_given(fake_prisma):
+    await _seed_wallet(fake_prisma, paid=100.0)
+    first = await charge(
+        tenant_id="team-1",
+        actual_credits=5.0,
+        agent_record_id="chat-1",
+    )
+    second = await charge(
+        tenant_id="team-1",
+        actual_credits=5.0,
+        agent_record_id="chat-1",
+    )
+    assert first["charged"] is True
+    assert second["charged"] is False
+    assert second["reason"] == "already_charged"
+    # Wallet debited only once
+    assert fake_prisma.db.wallets[0]["paid_balance"] == 95.0
+
+
+@pytest.mark.asyncio
+async def test_charge_without_agent_record_id_always_deducts(fake_prisma):
+    """No id → no idempotency check; each call hits the wallet."""
+    await _seed_wallet(fake_prisma, paid=100.0)
+    await charge(tenant_id="team-1", actual_credits=1.0)
+    await charge(tenant_id="team-1", actual_credits=1.0)
+    assert fake_prisma.db.wallets[0]["paid_balance"] == 98.0
+
+
+@pytest.mark.asyncio
+async def test_charge_lazy_creates_wallet(fake_prisma):
+    """First chat for a tenant with no wallet row → row appears, paid goes negative."""
+    assert fake_prisma.db.wallets == []
+    result = await charge(
+        tenant_id="team-new",
+        actual_credits=2.5,
+        agent_record_id="chat-1",
+    )
+    assert result["charged"] is True
+    assert len(fake_prisma.db.wallets) == 1
+    wallet = fake_prisma.db.wallets[0]
+    assert wallet["tenant_id"] == "team-new"
+    # Empty wallet got drained → paid went negative
+    assert wallet["paid_balance"] == -2.5
+    assert wallet["total_consumed"] == 2.5
+
+
+@pytest.mark.asyncio
+async def test_charge_zero_amount_no_op(fake_prisma):
+    """Cost=0 (cache hit, free model) should not write a tx row."""
+    await _seed_wallet(fake_prisma, paid=100.0)
+    result = await charge(tenant_id="team-1", actual_credits=0.0, agent_record_id="x")
+    assert result["charged"] is False
+    assert _txs(fake_prisma, "x") == []
+    assert fake_prisma.db.wallets[0]["paid_balance"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_charge_overspend_allowed_with_warning(fake_prisma):
+    """Wallet may go negative — prepaid convention. Subsequent requests gated elsewhere."""
+    await _seed_wallet(fake_prisma, paid=2.0)
+    result = await charge(
+        tenant_id="team-1",
+        actual_credits=10.0,
+        agent_record_id="chat-1",
+    )
+    assert result["charged"] is True
+    assert fake_prisma.db.wallets[0]["paid_balance"] == -8.0
+    assert fake_prisma.db.wallets[0]["total_consumed"] == 10.0
+
+
+# ----------------------------------------------------------------------
+# get_balance — read-only snapshot used by the pre-call balance check
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_balance_returns_none_when_wallet_missing(fake_prisma):
+    """No wallet row → None (caller treats as 'not on prepaid plan, skip check')."""
+    result = await get_balance("team-never-seen")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_balance_returns_available_breakdown(fake_prisma):
+    await _seed_wallet(fake_prisma, gift=5.0, paid=20.0, frozen=3.0)
+    result = await get_balance("team-1")
+    assert result is not None
+    assert result["gift_balance"] == 5.0
+    assert result["paid_balance"] == 20.0
+    assert result["frozen_amount"] == 3.0
+    assert result["available"] == 22.0  # 5 + 20 - 3
+
+
+@pytest.mark.asyncio
+async def test_get_balance_reflects_overspent_negative(fake_prisma):
+    """After charge() pushed paid negative, available reflects that."""
+    await _seed_wallet(fake_prisma, paid=2.0)
+    await charge(tenant_id="team-1", actual_credits=10.0, agent_record_id="t")
+    result = await get_balance("team-1")
+    assert result["paid_balance"] == -8.0
+    assert result["available"] == -8.0  # 0 + (-8) - 0
+
+
+@pytest.mark.asyncio
+async def test_get_balance_empty_string_tenant_returns_none(fake_prisma):
+    """Defensive: empty tenant_id shouldn't crash, just return None."""
+    assert await get_balance("") is None

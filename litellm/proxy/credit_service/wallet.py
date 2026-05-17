@@ -100,6 +100,39 @@ async def _already_finalised(tx: Any, agent_record_id: str, tx_type: str) -> boo
 # ----------------------------------------------------------------------
 
 
+async def get_balance(tenant_id: str) -> Optional[Dict[str, Any]]:
+    """Read-only balance snapshot — used by the pre-call balance check.
+
+    Returns ``None`` when no wallet row exists for the tenant. Callers
+    treat ``None`` as "not on the prepaid plan — skip balance gating",
+    which keeps the wallet system opt-in: only tenants who actually have
+    a wallet row get balance-checked.
+
+    Distinct from :func:`ensure_wallet` (which lazy-creates) so that a
+    pre-call hook doesn't auto-create a wallet for every traffic source
+    that ever hits the proxy.
+    """
+    if not tenant_id:
+        return None
+    prisma_client = _get_prisma_client()
+    existing = await prisma_client.db.creditwallet.find_unique(
+        where={"tenant_id": tenant_id}
+    )
+    if existing is None:
+        return None
+    row = existing.model_dump() if hasattr(existing, "model_dump") else dict(existing)
+    gift = float(row.get("gift_balance") or 0)
+    paid = float(row.get("paid_balance") or 0)
+    frozen = float(row.get("frozen_amount") or 0)
+    return {
+        "tenant_id": tenant_id,
+        "gift_balance": gift,
+        "paid_balance": paid,
+        "frozen_amount": frozen,
+        "available": gift + paid - frozen,
+    }
+
+
 async def ensure_wallet(tenant_id: str) -> Dict[str, Any]:
     """Lazy-create a wallet for ``tenant_id`` if missing. Returns the wallet row.
 
@@ -195,6 +228,122 @@ async def pre_deduct(
         "agent_record_id": agent_record_id,
         "frozen_amount": estimated_credits,
         "available_before": available,
+    }
+
+
+async def charge(
+    *,
+    tenant_id: str,
+    actual_credits: float,
+    agent_record_id: Optional[str] = None,
+    model_name: Optional[str] = None,
+    description: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sync deduct — no freeze, gift first then paid.
+
+    For chat / sync media where the request lifecycle is short enough that
+    we don't need a freeze window. Called from the post-call success hook
+    after litellm computes ``response_cost``. The wallet acts as a prepaid
+    account; litellm's own ``LiteLLM_UserTable.spend`` accumulator and
+    ``max_budget`` enforcement keep running in parallel for reporting and
+    hard caps.
+
+    Idempotent when ``agent_record_id`` is provided — second call with the
+    same id is a no-op (skips double-charging on retries). Without an id,
+    every call deducts.
+
+    Allows the wallet to go negative if ``actual_credits`` exceeds the
+    available balance — we log a warning but still record the consumption,
+    matching the prepaid account convention that subsequent requests are
+    refused by pre-call balance checks rather than failing post-completion.
+    """
+    actual_credits = max(float(actual_credits or 0), 0.0)
+    if actual_credits == 0:
+        return {"charged": False, "reason": "zero_amount"}
+
+    prisma_client = _get_prisma_client()
+    async with prisma_client.db.tx() as tx:
+        if agent_record_id and await _already_finalised(
+            tx, agent_record_id, _CONSUMPTION
+        ):
+            verbose_proxy_logger.debug(
+                "credit_service.charge: task=%s already charged — skipping",
+                agent_record_id,
+            )
+            return {"charged": False, "reason": "already_charged"}
+
+        wallet = await _find_wallet(tx, tenant_id)
+        if wallet is None:
+            await tx.creditwallet.create(data={"tenant_id": tenant_id})
+            wallet = await _find_wallet(tx, tenant_id)
+            if wallet is None:
+                raise WalletError(
+                    f"credit_service.charge: wallet for tenant {tenant_id!r} "
+                    "could not be created"
+                )
+
+        gift = float(wallet.get("gift_balance") or 0)
+        paid = float(wallet.get("paid_balance") or 0)
+        total_consumed = float(wallet.get("total_consumed") or 0)
+
+        gift_deduct = min(gift, actual_credits)
+        paid_deduct = actual_credits - gift_deduct  # may push paid negative
+
+        new_gift = gift - gift_deduct
+        new_paid = paid - paid_deduct  # negative if overspent
+        if new_paid < 0:
+            verbose_proxy_logger.warning(
+                "credit_service.charge: wallet went negative — tenant=%s "
+                "actual=%.4f gift=%.4f paid=%.4f → new_paid=%.4f",
+                tenant_id,
+                actual_credits,
+                gift,
+                paid,
+                new_paid,
+            )
+
+        await tx.creditwallet.update(
+            where={"tenant_id": tenant_id},
+            data={
+                "gift_balance": new_gift,
+                "paid_balance": new_paid,
+                "total_consumed": total_consumed + actual_credits,
+            },
+        )
+
+        if gift_deduct > 0:
+            await tx.credittransaction.create(
+                data={
+                    "tenant_id": tenant_id,
+                    "tx_type": _CONSUMPTION,
+                    "wallet_type": _GIFT,
+                    "amount": -gift_deduct,
+                    "balance_after": new_gift,
+                    "agent_record_id": agent_record_id,
+                    "model_name": model_name,
+                    "description": (description or f"消耗赠送积分 {gift_deduct:.4f} C"),
+                }
+            )
+        if paid_deduct > 0:
+            await tx.credittransaction.create(
+                data={
+                    "tenant_id": tenant_id,
+                    "tx_type": _CONSUMPTION,
+                    "wallet_type": _PAID,
+                    "amount": -paid_deduct,
+                    "balance_after": new_paid,
+                    "agent_record_id": agent_record_id,
+                    "model_name": model_name,
+                    "description": (description or f"消耗充值积分 {paid_deduct:.4f} C"),
+                }
+            )
+
+    return {
+        "charged": True,
+        "actual_credits": actual_credits,
+        "gift_deduct": gift_deduct,
+        "paid_deduct": paid_deduct,
+        "new_balance": new_gift + new_paid,
     }
 
 
