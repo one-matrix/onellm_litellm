@@ -117,9 +117,7 @@ async def ensure_wallet(tenant_id: str) -> Dict[str, Any]:
         return (
             existing.model_dump() if hasattr(existing, "model_dump") else dict(existing)
         )
-    created = await prisma_client.db.creditwallet.create(
-        data={"tenant_id": tenant_id}
-    )
+    created = await prisma_client.db.creditwallet.create(data={"tenant_id": tenant_id})
     return created.model_dump() if hasattr(created, "model_dump") else dict(created)
 
 
