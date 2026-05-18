@@ -344,6 +344,9 @@ from litellm.proxy.management_endpoints.callback_management_endpoints import (
 from litellm.proxy.management_endpoints.credit_management_endpoints import (
     router as credit_management_router,
 )
+from litellm.proxy.management_endpoints.pay_management_endpoints import (
+    router as pay_management_router,
+)
 from litellm.proxy.management_endpoints.common_utils import (
     _user_has_admin_privileges,
     _user_has_admin_view,
@@ -15354,6 +15357,7 @@ app.include_router(openai_files_router)
 app.include_router(team_callback_router)
 app.include_router(budget_management_router)
 app.include_router(credit_management_router)
+app.include_router(pay_management_router)
 app.include_router(model_management_router)
 app.include_router(model_access_group_management_router)
 app.include_router(tag_management_router)

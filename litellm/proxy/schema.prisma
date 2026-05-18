@@ -1554,3 +1554,121 @@ model CreditPackage {
   @@map("credit_package")
   @@schema("app")
 }
+
+// ----------------------------------------------------------------------
+// Generic payment platform tables — channel-agnostic + product-agnostic.
+// Live in the `app` schema so upstream litellm migrations never collide.
+// See docs/sql/pay.sql for the original DDL design.
+// ----------------------------------------------------------------------
+
+model PayOrder {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @client.Uuid
+  out_trade_no       String    @unique @client.VarChar(64)
+  channel            String    @client.VarChar(20)
+  channel_trade_no   String?   @client.VarChar(128)
+
+  tenant_id          String?
+  user_id            String
+
+  product_type       String    @client.VarChar(40)
+  product_id         String?   @client.VarChar(64)
+  product_name       String    @client.VarChar(256)
+  quantity           Int       @default(1)
+  unit               String?   @client.VarChar(20)
+  billing_cycle      String?   @client.VarChar(40)
+  product_meta       Json      @default("{}")
+
+  amount_cny         Float
+  paid_amount_cny    Float?
+  currency           String    @default("CNY") @client.VarChar(3)
+
+  status             String    @default("pending") @client.VarChar(20)
+  paid_at            DateTime? @client.Timestamptz(6)
+  expire_at          DateTime  @client.Timestamptz(6)
+
+  pay_account        String?   @client.VarChar(128)
+  financial_category String?   @client.VarChar(40)
+
+  remark             String?   @client.VarChar(500)
+  client_ip          String?   @client.VarChar(45)
+  metadata           Json      @default("{}")
+
+  created_at         DateTime  @default(now()) @client.Timestamptz(6)
+  created_by         String?
+  updated_at         DateTime  @default(now()) @updatedAt @client.Timestamptz(6)
+  updated_by         String?
+  is_deleted         Boolean   @default(false)
+  deleted_at         DateTime? @client.Timestamptz(6)
+  deleted_by         String?
+
+  refunds            PayRefund[]
+
+  @@index([tenant_id])
+  @@index([user_id])
+  @@index([status])
+  @@index([created_at(sort: Desc)])
+  @@index([channel_trade_no])
+  @@index([product_type, product_id])
+  @@map("pay_order")
+  @@schema("app")
+}
+
+model PayNotifyLog {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @client.Uuid
+  channel           String   @client.VarChar(20)
+  order_id          String?  @client.Uuid
+  out_trade_no      String?  @client.VarChar(64)
+  channel_trade_no  String?  @client.VarChar(128)
+  trade_status      String?  @client.VarChar(40)
+  raw_body          Json
+  signature_valid   Boolean
+  processed         Boolean  @default(false)
+  error_message     String?
+  client_ip         String?  @client.VarChar(45)
+  received_at       DateTime @default(now()) @client.Timestamptz(6)
+
+  @@index([out_trade_no])
+  @@index([order_id])
+  @@index([received_at(sort: Desc)])
+  @@map("pay_notify_log")
+  @@schema("app")
+}
+
+model PayRefund {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @client.Uuid
+
+  order_id            String    @client.Uuid
+  out_trade_no        String    @client.VarChar(64)
+  out_refund_no       String    @unique @client.VarChar(64)
+  channel             String    @client.VarChar(20)
+  channel_refund_no   String?   @client.VarChar(128)
+
+  refund_amount_cny   Float
+  currency            String    @default("CNY") @client.VarChar(3)
+
+  reason              String    @default("") @client.VarChar(500)
+  status              String    @default("pending") @client.VarChar(20)
+  error_message       String?
+
+  business_settled    Boolean   @default(false)
+  settlement_meta     Json      @default("{}")
+
+  operator_id         String
+  refunded_at         DateTime? @client.Timestamptz(6)
+  created_at          DateTime  @default(now()) @client.Timestamptz(6)
+  created_by          String?
+  updated_at          DateTime  @default(now()) @updatedAt @client.Timestamptz(6)
+  updated_by          String?
+  is_deleted          Boolean   @default(false)
+  deleted_at          DateTime? @client.Timestamptz(6)
+  deleted_by          String?
+
+  order               PayOrder  @relation(fields: [order_id], references: [id])
+
+  @@index([order_id])
+  @@index([out_trade_no])
+  @@index([status])
+  @@index([created_at(sort: Desc)])
+  @@map("pay_refund")
+  @@schema("app")
+}
