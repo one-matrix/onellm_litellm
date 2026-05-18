@@ -1534,3 +1534,23 @@ model CreditTransaction {
   @@map("credit_transaction")
   @@schema("app")
 }
+
+// Pre-defined credit recharge packages. Editable by admins; consumed by the
+// /credit/packages endpoint and the user-facing recharge page.
+model CreditPackage {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @client.Uuid
+  name           String   @client.VarChar(100)
+  credits_amount Float
+  price_cny      Float
+  bonus_credits  Float?   @default(0)
+  badge_text     String?  @client.VarChar(50)
+  is_active      Boolean  @default(true)
+  sort_order     Int?     @default(0)
+  created_at     DateTime @default(now()) @client.Timestamptz(6)
+  updated_at     DateTime @default(now()) @updatedAt @client.Timestamptz(6)
+
+  @@index([is_active])
+  @@index([sort_order])
+  @@map("credit_package")
+  @@schema("app")
+}
