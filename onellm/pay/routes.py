@@ -12,14 +12,14 @@ Tables live in the ``app`` schema (separate from upstream ``public``):
 Prisma accessors are ``prisma_client.db.payorder`` /
 ``paynotifylog`` / ``payrefund`` (no ``LiteLLM_`` prefix — onellm extensions).
 
-Channel adapters live in ``litellm/proxy/pay_service/channels/``. This module
-ships a ``stub`` channel that simulates payment success so the recharge flow
-works end-to-end without an SDK; real adapters (alipay/wechat/stripe) plug in
-via ``pay_service/registry.py``.
+Channel adapters live in ``onellm/pay/channels/``. This module ships a
+``stub`` channel that simulates payment success so the recharge flow works
+end-to-end without an SDK; real adapters (alipay/wechat/stripe) plug in via
+``onellm/pay/registry.py``.
 
 Product settlement (e.g. crediting the wallet on a successful ``credits``
 order) is dispatched by ``product_type`` — currently only ``credits`` is
-implemented (mirrors ``credit_management_endpoints.recharge``).
+implemented (mirrors ``onellm.credits.routes.recharge``).
 
 Endpoints:
 
@@ -43,8 +43,8 @@ from pydantic import BaseModel, Field
 
 from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
-from litellm.proxy.pay_service import get_channel, is_channel_supported, supported_channels
-from litellm.proxy.pay_service.channels.types import CreatePaymentInput
+from onellm.pay import get_channel, is_channel_supported, supported_channels
+from onellm.pay.channels.types import CreatePaymentInput
 
 router = APIRouter()
 
@@ -79,7 +79,9 @@ def _get_prisma_client():
     if prisma_client is None:
         raise HTTPException(
             status_code=500,
-            detail={"error": "pay_service: prisma_client is not initialised — DATABASE_URL required"},
+            detail={
+                "error": "onellm.pay: prisma_client is not initialised — DATABASE_URL required"
+            },
         )
     return prisma_client
 
@@ -99,7 +101,9 @@ def _resolve_tenant(user_api_key_dict: UserAPIKeyAuth) -> Optional[str]:
 
 def _resolve_user_id(user_api_key_dict: UserAPIKeyAuth) -> str:
     if not user_api_key_dict.user_id:
-        raise HTTPException(status_code=401, detail={"error": "Authenticated user_id required"})
+        raise HTTPException(
+            status_code=401, detail={"error": "Authenticated user_id required"}
+        )
     return user_api_key_dict.user_id
 
 
@@ -127,7 +131,9 @@ def _generate_out_refund_no(out_trade_no: str) -> str:
 
 class CreateOrderRequest(BaseModel):
     channel: str = Field(..., description="alipay | wechat | stripe | stub | ...")
-    product_type: str = Field(..., description="'credits' | 'subscription' | 'goods' | ...")
+    product_type: str = Field(
+        ..., description="'credits' | 'subscription' | 'goods' | ..."
+    )
     product_id: Optional[str] = None
     product_name: str
     quantity: int = 1
@@ -144,6 +150,7 @@ class CreateOrderRequest(BaseModel):
 
 class CreateRechargeRequest(BaseModel):
     """Convenience wrapper for product_type=credits."""
+
     channel: str
     package_id: Optional[str] = None
     custom_amount: Optional[float] = None
@@ -178,7 +185,9 @@ def _serialize_order(row: Dict[str, Any]) -> Dict[str, Any]:
         "product_meta": row.get("product_meta") or {},
         "amount_cny": float(row.get("amount_cny") or 0),
         "paid_amount_cny": (
-            float(row["paid_amount_cny"]) if row.get("paid_amount_cny") is not None else None
+            float(row["paid_amount_cny"])
+            if row.get("paid_amount_cny") is not None
+            else None
         ),
         "currency": row.get("currency"),
         "status": row.get("status"),
@@ -198,7 +207,9 @@ def _serialize_order(row: Dict[str, Any]) -> Dict[str, Any]:
 def _serialize_refund(row: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": str(row.get("id")) if row.get("id") is not None else None,
-        "order_id": str(row.get("order_id")) if row.get("order_id") is not None else None,
+        "order_id": (
+            str(row.get("order_id")) if row.get("order_id") is not None else None
+        ),
         "out_trade_no": row.get("out_trade_no"),
         "out_refund_no": row.get("out_refund_no"),
         "channel": row.get("channel"),
@@ -234,10 +245,16 @@ async def _settle_credits_purchase(prisma_client, order: Dict[str, Any]) -> None
 
     tenant_id = order.get("tenant_id") or _DEFAULT_TENANT
 
-    wallet = await prisma_client.db.creditwallet.find_unique(where={"tenant_id": tenant_id})
+    wallet = await prisma_client.db.creditwallet.find_unique(
+        where={"tenant_id": tenant_id}
+    )
     if wallet is None:
         wallet_created = await prisma_client.db.creditwallet.create(
-            data={"tenant_id": tenant_id, "paid_balance": total, "total_recharged": total}
+            data={
+                "tenant_id": tenant_id,
+                "paid_balance": total,
+                "total_recharged": total,
+            }
         )
         wallet = wallet_created
     else:
@@ -252,7 +269,9 @@ async def _settle_credits_purchase(prisma_client, order: Dict[str, Any]) -> None
                 "updated_at": datetime.now(timezone.utc),
             },
         )
-        wallet = await prisma_client.db.creditwallet.find_unique(where={"tenant_id": tenant_id})
+        wallet = await prisma_client.db.creditwallet.find_unique(
+            where={"tenant_id": tenant_id}
+        )
 
     w = _dump(wallet) or {}
     new_paid_balance = float(w.get("paid_balance") or 0)
@@ -276,7 +295,9 @@ async def _settle_credits_purchase(prisma_client, order: Dict[str, Any]) -> None
     )
 
 
-async def _settle_credits_refund(prisma_client, order: Dict[str, Any], refund_amount_cny: float) -> Dict[str, Any]:
+async def _settle_credits_refund(
+    prisma_client, order: Dict[str, Any], refund_amount_cny: float
+) -> Dict[str, Any]:
     """Reverse the corresponding credits from ``paid_balance`` (only). Returns
     a settlement_meta dict to persist on the refund row."""
     tenant_id = order.get("tenant_id") or _DEFAULT_TENANT
@@ -289,9 +310,15 @@ async def _settle_credits_refund(prisma_client, order: Dict[str, Any], refund_am
     order_amount = float(order.get("amount_cny") or 0) or 1
     refund_credits = round((refund_amount_cny / order_amount) * total_credits, 2)
 
-    wallet = _dump(await prisma_client.db.creditwallet.find_unique(where={"tenant_id": tenant_id}))
+    wallet = _dump(
+        await prisma_client.db.creditwallet.find_unique(where={"tenant_id": tenant_id})
+    )
     if wallet is None:
-        return {"refund_credits": refund_credits, "deducted": 0, "shortfall": refund_credits}
+        return {
+            "refund_credits": refund_credits,
+            "deducted": 0,
+            "shortfall": refund_credits,
+        }
 
     paid = float(wallet.get("paid_balance") or 0)
     deducted = min(paid, refund_credits)
@@ -317,7 +344,11 @@ async def _settle_credits_refund(prisma_client, order: Dict[str, Any], refund_am
             },
         }
     )
-    return {"refund_credits": refund_credits, "deducted": deducted, "shortfall": shortfall}
+    return {
+        "refund_credits": refund_credits,
+        "deducted": deducted,
+        "shortfall": shortfall,
+    }
 
 
 async def _settle_by_product_type(prisma_client, order: Dict[str, Any]) -> None:
@@ -355,7 +386,9 @@ async def _mark_paid_and_settle(
     if pay_account:
         patch["pay_account"] = pay_account
 
-    updated = await prisma_client.db.payorder.update(where={"id": order["id"]}, data=patch)
+    updated = await prisma_client.db.payorder.update(
+        where={"id": order["id"]}, data=patch
+    )
     order_updated = _dump(updated) or order
     await _settle_by_product_type(prisma_client, order_updated)
     return order_updated
@@ -387,9 +420,13 @@ async def create_order(
 ):
     """Create a generic pay order and return the channel payment payload."""
     if not is_channel_supported(payload.channel):
-        raise HTTPException(status_code=400, detail={"error": f"Unsupported channel: {payload.channel}"})
+        raise HTTPException(
+            status_code=400, detail={"error": f"Unsupported channel: {payload.channel}"}
+        )
     if payload.amount_cny <= 0:
-        raise HTTPException(status_code=400, detail={"error": "amount_cny must be positive"})
+        raise HTTPException(
+            status_code=400, detail={"error": "amount_cny must be positive"}
+        )
 
     prisma_client = _get_prisma_client()
     user_id = _resolve_user_id(user_api_key_dict)
@@ -449,10 +486,38 @@ async def create_order(
 
 # Default recharge packages — surfaced when ``credit_package`` table is empty.
 _DEFAULT_PACKAGES: List[Dict[str, Any]] = [
-    {"id": "default-30",   "name": "体验包", "price_cny": 30,   "credits_amount": 30,   "bonus_credits": 0, "badge_text": None},
-    {"id": "default-100",  "name": "标准包", "price_cny": 100,  "credits_amount": 100,  "bonus_credits": 0, "badge_text": "常用"},
-    {"id": "default-500",  "name": "大额包", "price_cny": 500,  "credits_amount": 500,  "bonus_credits": 0, "badge_text": None},
-    {"id": "default-1000", "name": "超大包", "price_cny": 1000, "credits_amount": 1000, "bonus_credits": 0, "badge_text": None},
+    {
+        "id": "default-30",
+        "name": "体验包",
+        "price_cny": 30,
+        "credits_amount": 30,
+        "bonus_credits": 0,
+        "badge_text": None,
+    },
+    {
+        "id": "default-100",
+        "name": "标准包",
+        "price_cny": 100,
+        "credits_amount": 100,
+        "bonus_credits": 0,
+        "badge_text": "常用",
+    },
+    {
+        "id": "default-500",
+        "name": "大额包",
+        "price_cny": 500,
+        "credits_amount": 500,
+        "bonus_credits": 0,
+        "badge_text": None,
+    },
+    {
+        "id": "default-1000",
+        "name": "超大包",
+        "price_cny": 1000,
+        "credits_amount": 1000,
+        "bonus_credits": 0,
+        "badge_text": None,
+    },
 ]
 
 
@@ -478,7 +543,9 @@ async def create_recharge_order(
 ):
     """Convenience wrapper around ``/pay/order`` for product_type=credits."""
     if not is_channel_supported(payload.channel):
-        raise HTTPException(status_code=400, detail={"error": f"Unsupported channel: {payload.channel}"})
+        raise HTTPException(
+            status_code=400, detail={"error": f"Unsupported channel: {payload.channel}"}
+        )
 
     prisma_client = _get_prisma_client()
 
@@ -491,7 +558,9 @@ async def create_recharge_order(
     if payload.package_id:
         pkg = await _resolve_package(prisma_client, payload.package_id)
         if not pkg:
-            raise HTTPException(status_code=404, detail={"error": "Package not found or inactive"})
+            raise HTTPException(
+                status_code=404, detail={"error": "Package not found or inactive"}
+            )
         amount_cny = float(pkg["price_cny"])
         credits_amount = float(pkg["credits_amount"])
         bonus_credits = float(pkg.get("bonus_credits") or 0)
@@ -500,12 +569,17 @@ async def create_recharge_order(
     elif payload.custom_amount is not None:
         amt = int(payload.custom_amount)
         if amt < 1 or amt > 5000:
-            raise HTTPException(status_code=400, detail={"error": "custom_amount must be 1..5000"})
+            raise HTTPException(
+                status_code=400, detail={"error": "custom_amount must be 1..5000"}
+            )
         amount_cny = float(amt)
         credits_amount = float(amt)
         subject = f"充值 {amt} 积分"
     else:
-        raise HTTPException(status_code=400, detail={"error": "Either package_id or custom_amount is required"})
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Either package_id or custom_amount is required"},
+        )
 
     return await create_order(
         CreateOrderRequest(
@@ -553,7 +627,11 @@ async def get_order(
         try:
             channel = get_channel(row["channel"])
             result = channel.query_order(row["out_trade_no"])
-            if result and result.trade_status.lower() in ("paid", "trade_success", "trade_finished"):
+            if result and result.trade_status.lower() in (
+                "paid",
+                "trade_success",
+                "trade_finished",
+            ):
                 row = await _mark_paid_and_settle(
                     prisma_client,
                     row,
@@ -654,7 +732,9 @@ async def get_order_detail(
         "order": _serialize_order(order),
         "refunds": refund_rows,
         "refunded_amount": refunded_amount,
-        "remaining_amount": max(0.0, float(order.get("amount_cny") or 0) - refunded_amount),
+        "remaining_amount": max(
+            0.0, float(order.get("amount_cny") or 0) - refunded_amount
+        ),
     }
 
 
@@ -675,10 +755,15 @@ async def refund_order(
     if not order or order.get("is_deleted"):
         raise HTTPException(status_code=404, detail={"error": "Order not found"})
     if order.get("status") not in (_S_PAID, _S_PARTIAL_REFUNDED):
-        raise HTTPException(status_code=400, detail={"error": f"Cannot refund order in status {order.get('status')}"})
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"Cannot refund order in status {order.get('status')}"},
+        )
 
     if payload.amount_cny <= 0:
-        raise HTTPException(status_code=400, detail={"error": "Refund amount must be positive"})
+        raise HTTPException(
+            status_code=400, detail={"error": "Refund amount must be positive"}
+        )
 
     # Compute remaining refundable amount.
     existing_refunds = await prisma_client.db.payrefund.find_many(
@@ -739,7 +824,9 @@ async def refund_order(
     # Channel succeeded — settle business side.
     settlement_meta: Dict[str, Any] = {}
     if order.get("product_type") == _CREDITS_PRODUCT:
-        settlement_meta = await _settle_credits_refund(prisma_client, order, payload.amount_cny)
+        settlement_meta = await _settle_credits_refund(
+            prisma_client, order, payload.amount_cny
+        )
 
     await prisma_client.db.payrefund.update(
         where={"id": refund["id"]},
@@ -755,7 +842,9 @@ async def refund_order(
 
     # Update order status (refunded vs partial_refunded).
     new_refunded = refunded_total + payload.amount_cny
-    new_status = _S_REFUNDED if abs(new_refunded - amount_cny) < 1e-6 else _S_PARTIAL_REFUNDED
+    new_status = (
+        _S_REFUNDED if abs(new_refunded - amount_cny) < 1e-6 else _S_PARTIAL_REFUNDED
+    )
     await prisma_client.db.payorder.update(
         where={"id": order_id},
         data={"status": new_status, "updated_at": datetime.now(timezone.utc)},
@@ -791,7 +880,9 @@ async def channel_callback(
     try:
         channel = get_channel(channel_code)
     except ValueError:
-        raise HTTPException(status_code=404, detail={"error": f"Unknown channel: {channel_code}"})
+        raise HTTPException(
+            status_code=404, detail={"error": f"Unknown channel: {channel_code}"}
+        )
 
     # Accept either application/json or application/x-www-form-urlencoded.
     content_type = (request.headers.get("content-type") or "").lower()
@@ -821,7 +912,9 @@ async def channel_callback(
     out_trade_no = parsed.out_trade_no if parsed else None
     if out_trade_no:
         order_row = _dump(
-            await prisma_client.db.payorder.find_unique(where={"out_trade_no": out_trade_no})
+            await prisma_client.db.payorder.find_unique(
+                where={"out_trade_no": out_trade_no}
+            )
         )
 
     # Always log the callback.
@@ -847,7 +940,11 @@ async def channel_callback(
 
     # Channel-specific "is paid" check. For the stub channel we accept any
     # truthy status; for real adapters this should be tightened.
-    if parsed and parsed.trade_status.lower() in ("paid", "trade_success", "trade_finished"):
+    if parsed and parsed.trade_status.lower() in (
+        "paid",
+        "trade_success",
+        "trade_finished",
+    ):
         await _mark_paid_and_settle(
             prisma_client,
             order_row,

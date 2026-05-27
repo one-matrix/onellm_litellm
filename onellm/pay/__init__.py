@@ -11,4 +11,8 @@ per-product settler) mirrors ``frontend/features/pay`` so future migration to
 real alipay/wechat SDKs is a drop-in.
 """
 
-from .registry import get_channel, is_channel_supported, supported_channels  # noqa: F401
+from .registry import (
+    get_channel,
+    is_channel_supported,
+    supported_channels,
+)  # noqa: F401

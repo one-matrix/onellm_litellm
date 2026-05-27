@@ -14,13 +14,13 @@ async-media architecture and [docs/sql/credits.sql](../../../../docs/sql/credits
 for the SQL shape these tables descend from.
 """
 
-from litellm.proxy.credit_service.estimator import (
+from onellm.credits.estimator import (
     MIN_CHARGE_CREDITS,
     EstimateResult,
     estimate_media_credits,
 )
-from litellm.proxy.credit_service.callbacks import WalletChargeLogger
-from litellm.proxy.credit_service.wallet import (
+from onellm.credits.callbacks import WalletChargeLogger
+from onellm.credits.wallet import (
     WalletError,
     charge,
     ensure_wallet,

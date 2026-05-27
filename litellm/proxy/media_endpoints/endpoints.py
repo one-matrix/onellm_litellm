@@ -50,7 +50,7 @@ from litellm.media.main import (
 from litellm.proxy._types import ProxyException
 from litellm.proxy.auth.user_api_key_auth import UserAPIKeyAuth, user_api_key_auth
 from litellm.proxy.common_request_processing import ProxyBaseLLMRequestProcessing
-from litellm.proxy.credit_service import (
+from onellm.credits import (
     EstimateResult,
     WalletError,
     estimate_media_credits,

@@ -341,12 +341,15 @@ from litellm.proxy.management_endpoints.cache_settings_endpoints import (
 from litellm.proxy.management_endpoints.callback_management_endpoints import (
     router as callback_management_endpoints_router,
 )
-from litellm.proxy.management_endpoints.credit_management_endpoints import (
-    router as credit_management_router,
-)
-from litellm.proxy.management_endpoints.pay_management_endpoints import (
-    router as pay_management_router,
-)
+# Credit + pay management endpoints now live under the OneLLM control plane
+# (backend/onellm/). Imported lazily inside a try/except so a pure upstream
+# install without the onellm package still boots.
+try:
+    from onellm.credits.routes import router as credit_management_router
+    from onellm.pay.routes import router as pay_management_router
+except ImportError:
+    credit_management_router = None
+    pay_management_router = None
 from litellm.proxy.management_endpoints.common_utils import (
     _user_has_admin_privileges,
     _user_has_admin_view,
@@ -15356,8 +15359,10 @@ app.include_router(ui_crud_endpoints_router)
 app.include_router(openai_files_router)
 app.include_router(team_callback_router)
 app.include_router(budget_management_router)
-app.include_router(credit_management_router)
-app.include_router(pay_management_router)
+if credit_management_router is not None:
+    app.include_router(credit_management_router)
+if pay_management_router is not None:
+    app.include_router(pay_management_router)
 app.include_router(model_management_router)
 app.include_router(model_access_group_management_router)
 app.include_router(tag_management_router)
@@ -15372,6 +15377,15 @@ app.include_router(enterprise_router)
 app.include_router(ui_discovery_endpoints_router)
 # Eager: /models/{name}:method overlaps with the OpenAI /models endpoint.
 app.include_router(google_router)
+
+# OneLLM control plane (user / tenant / RBAC / OAuth). Optional so a pure
+# upstream LiteLLM install without the onellm package keeps booting.
+try:
+    from onellm.main import router as onellm_router
+
+    app.include_router(onellm_router)
+except ImportError:
+    verbose_proxy_logger.debug("OneLLM control plane not installed; skipping.")
 
 attach_lazy_features(app)
 app.add_middleware(

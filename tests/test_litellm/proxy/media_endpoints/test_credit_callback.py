@@ -12,7 +12,7 @@ from typing import Any, Dict
 
 import pytest
 
-from litellm.proxy.credit_service.callbacks import WalletChargeLogger
+from onellm.credits.callbacks import WalletChargeLogger
 from tests.test_litellm.proxy.media_endpoints.test_credit_wallet import (
     _PrismaClient,
     _seed_wallet,
@@ -155,7 +155,7 @@ async def test_callback_preserves_call_id_in_tx_row(fake_prisma):
 from fastapi import HTTPException
 
 from litellm.proxy._types import UserAPIKeyAuth
-from litellm.proxy.credit_service.wallet import charge as _charge
+from onellm.credits.wallet import charge as _charge
 
 
 def _api_key(

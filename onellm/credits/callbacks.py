@@ -24,12 +24,12 @@ Register from ``config.yaml``::
 
     litellm_settings:
       callbacks:
-        - litellm.proxy.credit_service.callbacks.WalletChargeLogger
+        - onellm.credits.callbacks.WalletChargeLogger
 
 or programmatically::
 
     import litellm
-    from litellm.proxy.credit_service.callbacks import WalletChargeLogger
+    from onellm.credits.callbacks import WalletChargeLogger
     litellm.callbacks.append(WalletChargeLogger())
 
 The callback is a no-op when ``prisma_client`` isn't initialised, so it's
@@ -46,7 +46,7 @@ from litellm._logging import verbose_proxy_logger
 from litellm.caching import DualCache
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.proxy._types import UserAPIKeyAuth
-from litellm.proxy.credit_service.wallet import (
+from onellm.credits.wallet import (
     WalletError,
     charge,
     get_balance,

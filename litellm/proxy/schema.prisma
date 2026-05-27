@@ -1672,3 +1672,203 @@ model PayRefund {
   @@map("pay_refund")
   @@schema("app")
 }
+
+// ----------------------------------------------------------------------
+// OneLLM identity / multi-tenant / RBAC tables.
+// Ported from docs/sql/user/public.sql (ASP.NET Identity style) into the
+// `app` schema. See the matching migration 20260527084700_add_onellm_identity.
+// ----------------------------------------------------------------------
+
+model SysTenant {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @client.Uuid
+  name                  String   @client.VarChar(100)
+  code                  String   @unique @client.VarChar(50)
+  domain                String?  @client.VarChar(200)
+  is_active             Boolean  @default(true)
+
+  // OneLLM extensions
+  litellm_team_id       String?
+  plan_code             String   @default("free") @client.VarChar(50)
+  default_price_markup  Float    @default(1.0)
+
+  created_at            DateTime @default(now()) @client.Timestamptz(6)
+  updated_at            DateTime? @client.Timestamptz(6)
+  is_deleted            Boolean  @default(false)
+
+  users                 SysUser[]
+  user_roles            SysUserRole[]
+
+  @@index([litellm_team_id])
+  @@map("sys_tenants")
+  @@schema("app")
+}
+
+model SysUser {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @client.Uuid
+  tenant_id              String?   @client.Uuid
+  department_id          String?   @client.Uuid
+  name                   String?   @client.VarChar(100)
+  is_active              Boolean   @default(true)
+  created_at             DateTime  @default(now()) @client.Timestamptz(6)
+  updated_at             DateTime  @default(now()) @updatedAt @client.Timestamptz(6)
+  is_deleted             Boolean   @default(false)
+
+  // ASP.NET Identity baseline
+  user_name              String?   @client.VarChar(256)
+  normalized_user_name   String?   @unique @client.VarChar(256)
+  email                  String?   @client.VarChar(256)
+  normalized_email       String?   @unique @client.VarChar(256)
+  email_confirmed        Boolean   @default(false)
+  password_hash          String?
+  security_stamp         String?
+  concurrency_stamp      String?
+  phone_number           String?
+  phone_number_confirmed Boolean   @default(false)
+  two_factor_enabled     Boolean   @default(false)
+  lockout_end            DateTime? @client.Timestamptz(6)
+  lockout_enabled        Boolean   @default(true)
+  access_failed_count    Int       @default(0)
+
+  // OneLLM extensions
+  litellm_user_id        String?
+  role_global            String    @default("user") @client.VarChar(20)
+
+  tenant                 SysTenant?     @relation(fields: [tenant_id], references: [id])
+  user_roles             SysUserRole[]
+  user_claims            SysUserClaim[]
+  user_logins            SysUserLogin[]
+  user_tokens            SysUserToken[]
+
+  @@index([tenant_id])
+  @@index([litellm_user_id])
+  @@map("sys_users")
+  @@schema("app")
+}
+
+model SysRole {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @client.Uuid
+  code              String   @unique @client.VarChar(50)
+  name              String?  @client.VarChar(256)
+  normalized_name   String?  @unique @client.VarChar(256)
+  description       String?  @client.VarChar(200)
+  concurrency_stamp String?
+  created_at        DateTime @default(now()) @client.Timestamptz(6)
+  updated_at        DateTime? @client.Timestamptz(6)
+  is_deleted        Boolean  @default(false)
+
+  user_roles        SysUserRole[]
+  role_permissions  SysRolePermission[]
+  role_claims       SysRoleClaim[]
+
+  @@map("sys_roles")
+  @@schema("app")
+}
+
+model SysUserRole {
+  user_id    String   @client.Uuid
+  role_id    String   @client.Uuid
+  tenant_id  String   @client.Uuid
+  created_at DateTime @default(now()) @client.Timestamptz(6)
+
+  user       SysUser   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  role       SysRole   @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  tenant     SysTenant @relation(fields: [tenant_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, role_id, tenant_id])
+  @@index([role_id])
+  @@index([tenant_id])
+  @@map("sys_user_roles")
+  @@schema("app")
+}
+
+model SysPermission {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @client.Uuid
+  name        String   @client.VarChar(50)
+  code        String   @unique @client.VarChar(100)
+  type        String
+  path        String?  @client.VarChar(200)
+  icon        String?  @client.VarChar(50)
+  sort_order  Int      @default(0)
+  parent_id   String?  @client.Uuid
+  created_at  DateTime @default(now()) @client.Timestamptz(6)
+  updated_at  DateTime? @client.Timestamptz(6)
+  is_deleted  Boolean  @default(false)
+
+  parent           SysPermission?      @relation("PermissionTree", fields: [parent_id], references: [id])
+  children         SysPermission[]     @relation("PermissionTree")
+  role_permissions SysRolePermission[]
+
+  @@index([parent_id])
+  @@map("sys_permissions")
+  @@schema("app")
+}
+
+model SysRolePermission {
+  role_id       String @client.Uuid
+  permission_id String @client.Uuid
+
+  role       SysRole       @relation(fields: [role_id], references: [id], onDelete: Cascade)
+  permission SysPermission @relation(fields: [permission_id], references: [id], onDelete: Cascade)
+
+  @@id([role_id, permission_id])
+  @@index([permission_id])
+  @@map("sys_role_permissions")
+  @@schema("app")
+}
+
+model SysUserLogin {
+  login_provider        String
+  provider_key          String
+  provider_display_name String?
+  user_id               String   @client.Uuid
+  created_at            DateTime @default(now()) @client.Timestamptz(6)
+
+  user                  SysUser  @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([login_provider, provider_key])
+  @@index([user_id])
+  @@map("sys_user_logins")
+  @@schema("app")
+}
+
+model SysUserToken {
+  user_id        String    @client.Uuid
+  login_provider String
+  name           String
+  value          String?
+  expires_at     DateTime? @client.Timestamptz(6)
+  created_at     DateTime  @default(now()) @client.Timestamptz(6)
+
+  user           SysUser   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, login_provider, name])
+  @@index([expires_at])
+  @@map("sys_user_tokens")
+  @@schema("app")
+}
+
+model SysUserClaim {
+  id          Int     @id @default(autoincrement())
+  user_id     String  @client.Uuid
+  claim_type  String?
+  claim_value String?
+
+  user        SysUser @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("sys_user_claims")
+  @@schema("app")
+}
+
+model SysRoleClaim {
+  id          Int     @id @default(autoincrement())
+  role_id     String  @client.Uuid
+  claim_type  String?
+  claim_value String?
+
+  role        SysRole @relation(fields: [role_id], references: [id], onDelete: Cascade)
+
+  @@index([role_id])
+  @@map("sys_role_claims")
+  @@schema("app")
+}

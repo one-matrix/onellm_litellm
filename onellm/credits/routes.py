@@ -64,7 +64,9 @@ _DEFAULT_TENANT = "default"
 _INITIAL_GIFT_CREDITS = 10.0
 
 
-def _resolve_tenant_id(user_api_key_dict: UserAPIKeyAuth, override: Optional[str] = None) -> str:
+def _resolve_tenant_id(
+    user_api_key_dict: UserAPIKeyAuth, override: Optional[str] = None
+) -> str:
     """Pick the tenant_id for credit operations.
 
     - Admin callers may pass ``override`` to read/write any tenant.
@@ -72,11 +74,7 @@ def _resolve_tenant_id(user_api_key_dict: UserAPIKeyAuth, override: Optional[str
     """
     if override and _is_admin(user_api_key_dict):
         return override
-    return (
-        user_api_key_dict.team_id
-        or user_api_key_dict.user_id
-        or _DEFAULT_TENANT
-    )
+    return user_api_key_dict.team_id or user_api_key_dict.user_id or _DEFAULT_TENANT
 
 
 def _is_admin(user_api_key_dict: UserAPIKeyAuth) -> bool:
@@ -95,7 +93,9 @@ def _get_prisma_client():
     if prisma_client is None:
         raise HTTPException(
             status_code=500,
-            detail={"error": "credit_service: prisma_client is not initialised — DATABASE_URL required"},
+            detail={
+                "error": "onellm.credits: prisma_client is not initialised — DATABASE_URL required"
+            },
         )
     return prisma_client
 
@@ -209,7 +209,9 @@ class PackagePayload(BaseModel):
 
 async def _ensure_wallet_with_gift(prisma_client, tenant_id: str) -> Dict[str, Any]:
     """Find or auto-init a wallet. First-time init grants ``_INITIAL_GIFT_CREDITS``."""
-    existing = await prisma_client.db.creditwallet.find_unique(where={"tenant_id": tenant_id})
+    existing = await prisma_client.db.creditwallet.find_unique(
+        where={"tenant_id": tenant_id}
+    )
     if existing is not None:
         return _dump(existing) or {}
 
@@ -318,12 +320,18 @@ async def adjust_wallet(
     """Admin: adjust gift or paid balance and log an ``admin_adjust`` tx."""
     _require_admin(user_api_key_dict)
     if payload.wallet_type not in (_GIFT, _PAID):
-        raise HTTPException(status_code=400, detail={"error": "wallet_type must be 'gift' or 'paid'"})
+        raise HTTPException(
+            status_code=400, detail={"error": "wallet_type must be 'gift' or 'paid'"}
+        )
     if payload.amount == 0:
         raise HTTPException(status_code=400, detail={"error": "amount cannot be 0"})
 
     prisma_client = _get_prisma_client()
-    wallet = _dump(await prisma_client.db.creditwallet.find_unique(where={"tenant_id": payload.tenant_id}))
+    wallet = _dump(
+        await prisma_client.db.creditwallet.find_unique(
+            where={"tenant_id": payload.tenant_id}
+        )
+    )
     if wallet is None:
         wallet = await _ensure_wallet_with_gift(prisma_client, payload.tenant_id)
 
@@ -343,9 +351,13 @@ async def adjust_wallet(
     }
     if payload.amount > 0:
         if payload.wallet_type == _GIFT:
-            update_data["total_gifted"] = _coerce_decimal(wallet.get("total_gifted")) + payload.amount
+            update_data["total_gifted"] = (
+                _coerce_decimal(wallet.get("total_gifted")) + payload.amount
+            )
         else:
-            update_data["total_recharged"] = _coerce_decimal(wallet.get("total_recharged")) + payload.amount
+            update_data["total_recharged"] = (
+                _coerce_decimal(wallet.get("total_recharged")) + payload.amount
+            )
 
     await prisma_client.db.creditwallet.update(
         where={"tenant_id": payload.tenant_id}, data=update_data
@@ -363,7 +375,11 @@ async def adjust_wallet(
         }
     )
 
-    return {"success": True, "tenant_id": payload.tenant_id, "balance_after": new_balance}
+    return {
+        "success": True,
+        "tenant_id": payload.tenant_id,
+        "balance_after": new_balance,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +473,9 @@ async def create_recharge_order(
     prisma_client = _get_prisma_client()
     tenant_id = _resolve_tenant_id(user_api_key_dict)
 
-    pkg_row = await prisma_client.db.creditpackage.find_unique(where={"id": payload.package_id})
+    pkg_row = await prisma_client.db.creditpackage.find_unique(
+        where={"id": payload.package_id}
+    )
     pkg = _dump(pkg_row)
     if pkg is None:
         raise HTTPException(status_code=404, detail={"error": "Package not found"})
@@ -475,7 +493,8 @@ async def create_recharge_order(
         where={"tenant_id": tenant_id},
         data={
             "paid_balance": new_paid,
-            "total_recharged": _coerce_decimal(wallet.get("total_recharged")) + total_credits,
+            "total_recharged": _coerce_decimal(wallet.get("total_recharged"))
+            + total_credits,
             "updated_at": datetime.now(timezone.utc),
         },
     )
@@ -507,9 +526,36 @@ async def create_recharge_order(
 
 
 _DEFAULT_PACKAGES: List[Dict[str, Any]] = [
-    {"id": "default-1", "name": "入门包", "credits_amount": 400, "price_cny": 30, "bonus_credits": 0, "badge_text": None, "sort_order": 1, "is_active": True},
-    {"id": "default-2", "name": "标准包", "credits_amount": 1400, "price_cny": 98, "bonus_credits": 0, "badge_text": "热销", "sort_order": 2, "is_active": True},
-    {"id": "default-3", "name": "大额包", "credits_amount": 4500, "price_cny": 298, "bonus_credits": 0, "badge_text": "最划算", "sort_order": 3, "is_active": True},
+    {
+        "id": "default-1",
+        "name": "入门包",
+        "credits_amount": 400,
+        "price_cny": 30,
+        "bonus_credits": 0,
+        "badge_text": None,
+        "sort_order": 1,
+        "is_active": True,
+    },
+    {
+        "id": "default-2",
+        "name": "标准包",
+        "credits_amount": 1400,
+        "price_cny": 98,
+        "bonus_credits": 0,
+        "badge_text": "热销",
+        "sort_order": 2,
+        "is_active": True,
+    },
+    {
+        "id": "default-3",
+        "name": "大额包",
+        "credits_amount": 4500,
+        "price_cny": 298,
+        "bonus_credits": 0,
+        "badge_text": "最划算",
+        "sort_order": 3,
+        "is_active": True,
+    },
 ]
 
 

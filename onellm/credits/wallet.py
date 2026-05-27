@@ -61,7 +61,7 @@ def _get_prisma_client() -> Any:
 
     if prisma_client is None:
         raise WalletError(
-            "credit_service: prisma_client is not initialised — "
+            "credits.wallet: prisma_client is not initialised — "
             "credit wallet requires a database (set DATABASE_URL)."
         )
     return prisma_client
@@ -141,7 +141,7 @@ async def ensure_wallet(tenant_id: str) -> Dict[str, Any]:
     side-effect-free at boot.
     """
     if not tenant_id:
-        raise WalletError("credit_service: tenant_id is required")
+        raise WalletError("credits.wallet: tenant_id is required")
     prisma_client = _get_prisma_client()
     existing = await prisma_client.db.creditwallet.find_unique(
         where={"tenant_id": tenant_id}
@@ -179,7 +179,7 @@ async def pre_deduct(
             wallet = await _find_wallet(tx, tenant_id)
             if wallet is None:
                 raise WalletError(
-                    f"credit_service: wallet for tenant {tenant_id!r} could not be created"
+                    f"credits.wallet: wallet for tenant {tenant_id!r} could not be created"
                 )
 
         gift = float(wallet.get("gift_balance") or 0)
@@ -217,7 +217,7 @@ async def pre_deduct(
         )
 
     verbose_proxy_logger.debug(
-        "credit_service.pre_deduct: tenant=%s task=%s amount=%.4f available_before=%.4f",
+        "credits.wallet.pre_deduct: tenant=%s task=%s amount=%.4f available_before=%.4f",
         tenant_id,
         agent_record_id,
         estimated_credits,
@@ -267,7 +267,7 @@ async def charge(
             tx, agent_record_id, _CONSUMPTION
         ):
             verbose_proxy_logger.debug(
-                "credit_service.charge: task=%s already charged — skipping",
+                "credits.wallet.charge: task=%s already charged — skipping",
                 agent_record_id,
             )
             return {"charged": False, "reason": "already_charged"}
@@ -278,7 +278,7 @@ async def charge(
             wallet = await _find_wallet(tx, tenant_id)
             if wallet is None:
                 raise WalletError(
-                    f"credit_service.charge: wallet for tenant {tenant_id!r} "
+                    f"credits.wallet.charge: wallet for tenant {tenant_id!r} "
                     "could not be created"
                 )
 
@@ -293,7 +293,7 @@ async def charge(
         new_paid = paid - paid_deduct  # negative if overspent
         if new_paid < 0:
             verbose_proxy_logger.warning(
-                "credit_service.charge: wallet went negative — tenant=%s "
+                "credits.wallet.charge: wallet went negative — tenant=%s "
                 "actual=%.4f gift=%.4f paid=%.4f → new_paid=%.4f",
                 tenant_id,
                 actual_credits,
@@ -361,20 +361,20 @@ async def settle(
     Idempotent — calling twice with the same ``agent_record_id`` is a no-op.
     """
     if not agent_record_id:
-        raise WalletError("credit_service.settle: agent_record_id is required")
+        raise WalletError("credits.wallet.settle: agent_record_id is required")
     actual_credits = max(float(actual_credits or 0), 0.0)
 
     prisma_client = _get_prisma_client()
     async with prisma_client.db.tx() as tx:
         if await _already_finalised(tx, agent_record_id, _SETTLEMENT):
             verbose_proxy_logger.debug(
-                "credit_service.settle: task=%s already settled — skipping",
+                "credits.wallet.settle: task=%s already settled — skipping",
                 agent_record_id,
             )
             return {"settled": False, "reason": "already_settled"}
         if await _already_finalised(tx, agent_record_id, _REFUND):
             verbose_proxy_logger.debug(
-                "credit_service.settle: task=%s already refunded — skipping",
+                "credits.wallet.settle: task=%s already refunded — skipping",
                 agent_record_id,
             )
             return {"settled": False, "reason": "already_refunded"}
@@ -382,7 +382,7 @@ async def settle(
         wallet = await _find_wallet(tx, tenant_id)
         if wallet is None:
             raise WalletError(
-                f"credit_service.settle: wallet missing for tenant {tenant_id!r}"
+                f"credits.wallet.settle: wallet missing for tenant {tenant_id!r}"
             )
 
         pre_row = await _latest_pre_deduct(tx, agent_record_id)
@@ -454,7 +454,7 @@ async def settle(
         )
 
     verbose_proxy_logger.debug(
-        "credit_service.settle: tenant=%s task=%s actual=%.4f frozen=%.4f",
+        "credits.wallet.settle: tenant=%s task=%s actual=%.4f frozen=%.4f",
         tenant_id,
         agent_record_id,
         actual_credits,
@@ -485,7 +485,7 @@ async def rebind_agent_record_id(
     """
     if not placeholder or not real_id:
         raise WalletError(
-            "credit_service.rebind_agent_record_id: both placeholder and real_id required"
+            "credits.wallet.rebind_agent_record_id: both placeholder and real_id required"
         )
     prisma_client = _get_prisma_client()
     updated = await prisma_client.db.credittransaction.update_many(
@@ -493,7 +493,7 @@ async def rebind_agent_record_id(
         data={"agent_record_id": real_id},
     )
     verbose_proxy_logger.debug(
-        "credit_service.rebind: placeholder=%s real=%s rows=%s",
+        "credits.wallet.rebind: placeholder=%s real=%s rows=%s",
         placeholder,
         real_id,
         updated,
@@ -513,7 +513,7 @@ async def refund(
     ``agent_record_id``, this is a no-op.
     """
     if not agent_record_id:
-        raise WalletError("credit_service.refund: agent_record_id is required")
+        raise WalletError("credits.wallet.refund: agent_record_id is required")
     prisma_client = _get_prisma_client()
     async with prisma_client.db.tx() as tx:
         if await _already_finalised(tx, agent_record_id, _REFUND):
@@ -541,7 +541,7 @@ async def refund(
         wallet = await _find_wallet(tx, tenant_id)
         if wallet is None:
             raise WalletError(
-                f"credit_service.refund: wallet missing for tenant {tenant_id!r}"
+                f"credits.wallet.refund: wallet missing for tenant {tenant_id!r}"
             )
 
         refund_amount = abs(float(pre_row["amount"]))
@@ -565,7 +565,7 @@ async def refund(
         )
 
     verbose_proxy_logger.debug(
-        "credit_service.refund: tenant=%s task=%s amount=%.4f",
+        "credits.wallet.refund: tenant=%s task=%s amount=%.4f",
         tenant_id,
         agent_record_id,
         refund_amount,

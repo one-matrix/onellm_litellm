@@ -1,4 +1,4 @@
-"""Unit tests for the pure-function estimator in proxy.credit_service.
+"""Unit tests for the pure-function estimator in onellm.credits.
 
 Covers all three billing methods used in production (按张 / 按秒 / 按次),
 option_prices matching, markup, and the MIN_CHARGE_CREDITS floor.
@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 import pytest
 
-from litellm.proxy.credit_service.estimator import (
+from onellm.credits.estimator import (
     MIN_CHARGE_CREDITS,
     estimate_media_credits,
 )

@@ -15,8 +15,8 @@ from typing import Any, Dict, List
 import pytest
 
 from litellm.exceptions import BudgetExceededError
-from litellm.proxy.credit_service import wallet as wallet_mod
-from litellm.proxy.credit_service.wallet import (
+from onellm.credits import wallet as wallet_mod
+from onellm.credits.wallet import (
     charge,
     get_balance,
     pre_deduct,
