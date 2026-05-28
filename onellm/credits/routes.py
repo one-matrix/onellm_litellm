@@ -32,6 +32,7 @@ Endpoints:
   DELETE /credit/packages/{id}        admin: delete package
 """
 
+import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -250,6 +251,24 @@ async def get_my_wallet(
     return _serialize_wallet(wallet)
 
 
+def _empty_wallet(tenant_id: str) -> Dict[str, Any]:
+    """Zero-balance virtual row for tenants that have never initialised a wallet."""
+    return {
+        "id": None,
+        "tenant_id": tenant_id,
+        "gift_balance": 0.0,
+        "paid_balance": 0.0,
+        "frozen_amount": 0.0,
+        "available": 0.0,
+        "total_consumed": 0.0,
+        "total_recharged": 0.0,
+        "total_gifted": 0.0,
+        "low_balance_threshold": None,
+        "created_at": None,
+        "updated_at": None,
+    }
+
+
 @router.get(
     "/credit/wallet/list",
     tags=["credit management"],
@@ -261,46 +280,125 @@ async def list_wallets(
     search: Optional[str] = None,
     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
-    """Admin: paginated wallet list. ``search`` matches tenant_id substring."""
+    """Admin: full tenant list (every team + every user) with wallet status.
+
+    Wallets are created lazily on first ``/credit/wallet/me`` hit, so the
+    raw ``credit_wallet`` table only contains tenants who have logged in.
+    For an admin overview we merge in every team from
+    ``LiteLLM_TeamTable`` and every user from ``LiteLLM_UserTable``, then
+    left-join the wallets — tenants without an initialised wallet render
+    as zero-balance rows. Adjusting one auto-initialises it via
+    ``_ensure_wallet_with_gift`` in ``adjust_wallet``.
+
+    Any wallet whose ``tenant_id`` no longer matches a known team/user is
+    surfaced as kind ``orphan`` so deleted-but-funded accounts stay
+    auditable.
+
+    ``search`` matches ``tenant_id``, ``team_alias``, ``user_email``, or
+    ``user_alias`` (case-insensitive substring).
+    """
     _require_admin(user_api_key_dict)
     prisma_client = _get_prisma_client()
 
-    where: Dict[str, Any] = {}
-    if search:
-        where["tenant_id"] = {"contains": search}
+    # Fetch the three sources in parallel. Teams/users are typically small
+    # at admin scale; wallets is bounded by the same set.
+    try:
+        teams, users, wallets = await asyncio.gather(
+            prisma_client.db.litellm_teamtable.find_many(),
+            prisma_client.db.litellm_usertable.find_many(),
+            prisma_client.db.creditwallet.find_many(),
+        )
+    except Exception:
+        # Fallback for test envs without the LiteLLM tables — degrade to
+        # the original wallet-only listing.
+        teams, users = [], []
+        wallets = await prisma_client.db.creditwallet.find_many()
 
-    total = await prisma_client.db.creditwallet.count(where=where or None)  # type: ignore[arg-type]
-    rows = await prisma_client.db.creditwallet.find_many(
-        where=where or None,  # type: ignore[arg-type]
-        order={"updated_at": "desc"},
-        skip=(page - 1) * page_size,
-        take=page_size,
-    )
-
-    wallets = [_serialize_wallet(_dump(r)) for r in rows]
-
-    # Best-effort enrichment: look up team_alias if tenant_id matches a team.
-    tenant_ids = [w["tenant_id"] for w in wallets if w]
-    team_alias_by_id: Dict[str, str] = {}
-    if tenant_ids:
-        try:
-            teams = await prisma_client.db.litellm_teamtable.find_many(
-                where={"team_id": {"in": tenant_ids}}
-            )
-            for t in teams:
-                d = _dump(t) or {}
-                if d.get("team_id"):
-                    team_alias_by_id[d["team_id"]] = d.get("team_alias") or ""
-        except Exception:
-            # Team table not available in some test envs — skip enrichment.
-            pass
-
+    wallet_by_id: Dict[str, Dict[str, Any]] = {}
     for w in wallets:
-        if w:
-            w["tenant_alias"] = team_alias_by_id.get(w["tenant_id"], None)
+        d = _dump(w) or {}
+        tid = d.get("tenant_id")
+        if tid:
+            wallet_by_id[tid] = d
+
+    tenants: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for t in teams:
+        d = _dump(t) or {}
+        tid = d.get("team_id")
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        tenants.append(
+            {
+                "tenant_id": tid,
+                "tenant_alias": d.get("team_alias") or None,
+                "tenant_kind": "team",
+            }
+        )
+
+    for u in users:
+        d = _dump(u) or {}
+        uid = d.get("user_id")
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        tenants.append(
+            {
+                "tenant_id": uid,
+                "tenant_alias": d.get("user_email") or d.get("user_alias") or None,
+                "tenant_kind": "user",
+            }
+        )
+
+    # Orphan wallets: tenant_id no longer matches any team/user (e.g.,
+    # deleted user, or the "default" fallback bucket).
+    for tid in wallet_by_id:
+        if tid not in seen:
+            seen.add(tid)
+            tenants.append(
+                {
+                    "tenant_id": tid,
+                    "tenant_alias": None,
+                    "tenant_kind": "orphan",
+                }
+            )
+
+    if search:
+        q = search.lower()
+        tenants = [
+            t
+            for t in tenants
+            if q in t["tenant_id"].lower()
+            or (t["tenant_alias"] and q in t["tenant_alias"].lower())
+        ]
+
+    # Order: wallets-with-activity first (latest updated), then unfunded
+    # tenants by alias/id for a stable view.
+    def _sort_key(t: Dict[str, Any]):
+        w = wallet_by_id.get(t["tenant_id"])
+        if w and w.get("updated_at"):
+            return (0, -w["updated_at"].timestamp())
+        return (1, (t.get("tenant_alias") or t["tenant_id"]).lower())
+
+    tenants.sort(key=_sort_key)
+
+    total = len(tenants)
+    start = (page - 1) * page_size
+    page_slice = tenants[start : start + page_size]
+
+    rows: List[Dict[str, Any]] = []
+    for t in page_slice:
+        w = wallet_by_id.get(t["tenant_id"])
+        row = _serialize_wallet(w) if w else _empty_wallet(t["tenant_id"])
+        assert row is not None
+        row["tenant_alias"] = t["tenant_alias"]
+        row["tenant_kind"] = t["tenant_kind"]
+        rows.append(row)
 
     return {
-        "data": wallets,
+        "data": rows,
         "total": total,
         "page": page,
         "page_size": page_size,

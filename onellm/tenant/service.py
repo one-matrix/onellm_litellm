@@ -65,13 +65,13 @@ async def create_tenant(
         tenant = await tx.systenant.create(
             data={"name": name, "code": code, "plan_code": plan_code or "free"}
         )
-        owner_role = await tx.sysrole.find_unique(where={"code": "tenant_owner"})
-        if owner_role is None:
-            raise NotFound("tenant_owner role missing — re-run identity migration")
+        admin_role = await tx.sysrole.find_unique(where={"code": "tenant_admin"})
+        if admin_role is None:
+            raise NotFound("tenant_admin role missing — re-run identity migration")
         await tx.sysuserrole.create(
             data={
                 "user_id": owner_user_id,
-                "role_id": owner_role.id,
+                "role_id": admin_role.id,
                 "tenant_id": tenant.id,
             }
         )
@@ -192,10 +192,10 @@ async def update_member_roles(
     role_codes: List[str],
     actor_id: str,
 ) -> dict:
-    if user_id == actor_id and "tenant_owner" not in role_codes:
-        # Owners would otherwise be able to demote themselves out of the role
+    if user_id == actor_id and "tenant_admin" not in role_codes:
+        # Admins would otherwise be able to demote themselves out of the role
         # they need to manage members — surface as a clear error early.
-        raise PermissionDenied("Cannot strip your own tenant_owner role")
+        raise PermissionDenied("Cannot strip your own tenant_admin role")
 
     roles = await db.sysrole.find_many(where={"code": {"in": role_codes}})
     found_codes = {r.code for r in roles}

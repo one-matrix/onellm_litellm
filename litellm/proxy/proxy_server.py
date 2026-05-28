@@ -850,6 +850,17 @@ async def proxy_startup_event(app: FastAPI):  # noqa: PLR0915
 
         asyncio.create_task(_run_pw_migration())
 
+        # OneLLM platform superadmin bootstrap. Optional so a pure upstream
+        # LiteLLM install without the onellm package keeps booting.
+        try:
+            from onellm.bootstrap import ensure_superadmin as _onellm_ensure_superadmin
+
+            asyncio.create_task(_onellm_ensure_superadmin())
+        except ImportError:
+            verbose_proxy_logger.debug(
+                "OneLLM control plane not installed; skipping superadmin bootstrap."
+            )
+
     ProxyStartupEvent._initialize_startup_logging(
         llm_router=llm_router,
         proxy_logging_obj=proxy_logging_obj,

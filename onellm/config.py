@@ -30,6 +30,20 @@ class OneLLMSettings:
     google_client_secret: Optional[str] = None
     google_redirect_uri: Optional[str] = None
 
+    # Bootstrap: platform superadmin (role_global='root') auto-provisioned at startup.
+    # Defaults are safe for local dev but MUST be overridden in production via
+    # ONELLM_SUPERADMIN_* env vars — the first launch persists them into the DB.
+    #
+    # NOTE: do NOT use reserved TLDs like .local / .localhost / .test /
+    # .example / .invalid. Pydantic's EmailStr (via the email-validator
+    # package) refuses them per RFC 6761/6762, which would silently break
+    # login with a 422 even though the row exists in the database.
+    superadmin_email: str = "superadmin@onellm.io"
+    superadmin_password: str = "OneLLM-Super-Admin-Change-Me!"
+    superadmin_name: str = "Super Admin"
+    superadmin_tenant_code: str = "system"
+    superadmin_tenant_name: str = "System"
+
 
 def load_settings() -> OneLLMSettings:
     secret = (
@@ -53,6 +67,17 @@ def load_settings() -> OneLLMSettings:
         google_client_id=_env("ONELLM_GOOGLE_CLIENT_ID"),
         google_client_secret=_env("ONELLM_GOOGLE_CLIENT_SECRET"),
         google_redirect_uri=_env("ONELLM_GOOGLE_REDIRECT_URI"),
+        superadmin_email=_env("ONELLM_SUPERADMIN_EMAIL", "superadmin@onellm.io")
+        or "superadmin@onellm.io",
+        superadmin_password=_env(
+            "ONELLM_SUPERADMIN_PASSWORD", "OneLLM-Super-Admin-Change-Me!"
+        )
+        or "OneLLM-Super-Admin-Change-Me!",
+        superadmin_name=_env("ONELLM_SUPERADMIN_NAME", "Super Admin") or "Super Admin",
+        superadmin_tenant_code=_env("ONELLM_SUPERADMIN_TENANT_CODE", "system")
+        or "system",
+        superadmin_tenant_name=_env("ONELLM_SUPERADMIN_TENANT_NAME", "System")
+        or "System",
     )
 
 

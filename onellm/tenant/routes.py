@@ -66,8 +66,8 @@ async def create_tenant(
     identity: CurrentIdentity = Depends(get_current_user),
 ) -> TenantOut:
     # Any authenticated user can create a new tenant. The creator becomes the
-    # tenant_owner and pays for the seat the same way the registration flow
-    # creates the user's first tenant.
+    # tenant_admin (full rights including tenant.delete) and pays for the
+    # seat the same way the registration flow creates the user's first tenant.
     db = get_prisma()
     tenant = await tenant_service.create_tenant(
         db,
@@ -87,7 +87,7 @@ async def list_members(
     await _require_tenant_role(
         identity,
         tenant_id,
-        {"tenant_owner", "tenant_admin", "billing", "viewer", "developer"},
+        {"tenant_admin", "billing", "viewer", "user"},
     )
     db = get_prisma()
     return await tenant_service.list_members(db, tenant_id=tenant_id)
@@ -99,7 +99,7 @@ async def invite_member(
     payload: TenantMemberIn,
     identity: CurrentIdentity = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    await _require_tenant_role(identity, tenant_id, {"tenant_owner", "tenant_admin"})
+    await _require_tenant_role(identity, tenant_id, {"tenant_admin"})
     db = get_prisma()
     return await tenant_service.invite_member(
         db, tenant_id=tenant_id, email=payload.email, role_code=payload.role_code
@@ -113,7 +113,7 @@ async def update_member(
     payload: TenantMemberUpdateIn,
     identity: CurrentIdentity = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    await _require_tenant_role(identity, tenant_id, {"tenant_owner", "tenant_admin"})
+    await _require_tenant_role(identity, tenant_id, {"tenant_admin"})
     db = get_prisma()
     return await tenant_service.update_member_roles(
         db,
@@ -130,7 +130,7 @@ async def remove_member(
     user_id: str,
     identity: CurrentIdentity = Depends(get_current_user),
 ) -> None:
-    await _require_tenant_role(identity, tenant_id, {"tenant_owner"})
+    await _require_tenant_role(identity, tenant_id, {"tenant_admin"})
     db = get_prisma()
     await tenant_service.remove_member(
         db, tenant_id=tenant_id, user_id=user_id, actor_id=identity.user_id

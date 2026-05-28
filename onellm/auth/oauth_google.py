@@ -150,14 +150,14 @@ async def google_callback(request: Request) -> Any:
                         "role_global": "user",
                     }
                 )
-                owner_role = await tx.sysrole.find_unique(
-                    where={"code": "tenant_owner"}
+                admin_role = await tx.sysrole.find_unique(
+                    where={"code": "tenant_admin"}
                 )
-                if owner_role is not None:
+                if admin_role is not None:
                     await tx.sysuserrole.create(
                         data={
                             "user_id": user.id,
-                            "role_id": owner_role.id,
+                            "role_id": admin_role.id,
                             "tenant_id": tenant.id,
                         }
                     )
@@ -167,7 +167,12 @@ async def google_callback(request: Request) -> Any:
                         where={"id": tenant.id},
                         data={"litellm_team_id": team_id},
                     )
-                await upsert_litellm_user_shadow(tx, user=user, tenant=tenant)
+                await upsert_litellm_user_shadow(
+                    tx,
+                    user=user,
+                    tenant=tenant,
+                    tenant_role_codes=("tenant_admin",),
+                )
 
             # Bind the Google identity to whichever user we have now.
             await tx.sysuserlogin.create(

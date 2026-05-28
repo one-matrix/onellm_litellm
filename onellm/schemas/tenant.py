@@ -37,7 +37,7 @@ class TenantCreateIn(BaseModel):
 
 class TenantMemberIn(BaseModel):
     email: EmailStr
-    role_code: str = Field(description="e.g. tenant_admin, developer, viewer")
+    role_code: str = Field(description="e.g. tenant_admin, user, billing, viewer")
 
 
 class TenantMemberUpdateIn(BaseModel):

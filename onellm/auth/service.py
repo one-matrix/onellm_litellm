@@ -172,11 +172,11 @@ async def register_password_user(
             }
         )
 
-        owner_role = await _ensure_role(tx, "tenant_owner")
+        admin_role = await _ensure_role(tx, "tenant_admin")
         await tx.sysuserrole.create(
             data={
                 "user_id": user.id,
-                "role_id": owner_role.id,
+                "role_id": admin_role.id,
                 "tenant_id": tenant.id,
             }
         )
@@ -193,6 +193,7 @@ async def register_password_user(
             user=user,
             tenant=tenant,
             password_hash=password_hash,
+            tenant_role_codes=("tenant_admin",),
         )
         if litellm_user_id != user.litellm_user_id:
             user = await tx.sysuser.update(
