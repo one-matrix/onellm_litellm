@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, List, Optional
 
 from onellm.auth.password import new_security_stamp
+from onellm.db import ONELLM_TX_OPTIONS
 from onellm.exceptions import (
     EmailAlreadyRegistered,
     NotFound,
@@ -61,7 +62,7 @@ async def create_tenant(
     if existing is not None:
         raise TenantCodeTaken()
 
-    async with db.tx() as tx:
+    async with db.tx(**ONELLM_TX_OPTIONS) as tx:
         tenant = await tx.systenant.create(
             data={"name": name, "code": code, "plan_code": plan_code or "free"}
         )
@@ -150,7 +151,7 @@ async def invite_member(db: Any, *, tenant_id: str, email: str, role_code: str) 
     if role.code == "root":
         raise PermissionDenied("Cannot assign the root role through tenant invitation")
 
-    async with db.tx() as tx:
+    async with db.tx(**ONELLM_TX_OPTIONS) as tx:
         user = await _find_or_invite_user(tx, email=email)
         await tx.sysuserrole.upsert(
             where={
@@ -209,7 +210,7 @@ async def update_member_roles(
     if user is None or user.is_deleted:
         raise NotFound("User not found")
 
-    async with db.tx() as tx:
+    async with db.tx(**ONELLM_TX_OPTIONS) as tx:
         await tx.sysuserrole.delete_many(
             where={"user_id": user_id, "tenant_id": tenant_id}
         )

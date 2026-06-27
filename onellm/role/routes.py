@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, Body, Depends, status
 
-from onellm.db import get_prisma
+from onellm.db import ONELLM_TX_OPTIONS, get_prisma
 from onellm.deps import CurrentIdentity, get_current_user, require_global_role
 from onellm.exceptions import NotFound
 from onellm.schemas.role import RoleOut
@@ -69,7 +69,7 @@ async def replace_role_permissions(
     if missing:
         raise NotFound(f"Unknown permission codes: {sorted(missing)}")
 
-    async with db.tx() as tx:
+    async with db.tx(**ONELLM_TX_OPTIONS) as tx:
         await tx.sysrolepermission.delete_many(where={"role_id": role_id})
         for p in permissions:
             await tx.sysrolepermission.create(

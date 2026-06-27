@@ -6,9 +6,16 @@ the connection pool, and reusing it keeps transactions consistent across
 OneLLM + LiteLLM tables (e.g. when shadow-syncing sys_users -> LiteLLM_UserTable).
 """
 
+from datetime import timedelta
 from typing import Any
 
 from onellm.exceptions import OneLLMError
+
+
+ONELLM_TX_OPTIONS = {
+    "max_wait": timedelta(seconds=10),
+    "timeout": timedelta(seconds=60),
+}
 
 
 def get_prisma() -> Any:

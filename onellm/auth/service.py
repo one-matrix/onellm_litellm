@@ -14,6 +14,7 @@ from onellm.auth.jwt import issue_access_token, new_refresh_token
 from onellm.auth.lockout import is_locked, record_failure, record_success
 from onellm.auth.password import hash_password, new_security_stamp, verify_password
 from onellm.config import SETTINGS
+from onellm.db import ONELLM_TX_OPTIONS
 from onellm.exceptions import (
     AccountInactive,
     AccountLocked,
@@ -145,7 +146,7 @@ async def register_password_user(
     if not _TENANT_CODE_PATTERN.match(desired_code):
         desired_code = _slugify(desired_code)
 
-    async with db.tx() as tx:
+    async with db.tx(**ONELLM_TX_OPTIONS) as tx:
         final_code = await resolve_unique_tenant_code(tx, desired_code)
         tenant = await tx.systenant.create(
             data={

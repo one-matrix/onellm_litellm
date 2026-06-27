@@ -15,7 +15,7 @@ from litellm._logging import verbose_proxy_logger
 
 from onellm.auth.password import hash_password, new_security_stamp
 from onellm.config import SETTINGS
-from onellm.db import get_prisma
+from onellm.db import ONELLM_TX_OPTIONS, get_prisma
 from onellm.exceptions import OneLLMError
 from onellm.sync.litellm_shadow import (
     upsert_litellm_team_shadow,
@@ -105,7 +105,7 @@ async def ensure_superadmin() -> Optional[str]:
                 where={"code": SETTINGS.superadmin_tenant_code}
             )
             if tenant is None:
-                async with db.tx() as tx:
+                async with db.tx(**ONELLM_TX_OPTIONS) as tx:
                     tenant = await _ensure_system_tenant(tx)
             await _ensure_role_assignment(
                 db,
@@ -121,7 +121,7 @@ async def ensure_superadmin() -> Optional[str]:
         password_hash = hash_password(SETTINGS.superadmin_password)
         security_stamp = new_security_stamp()
 
-        async with db.tx() as tx:
+        async with db.tx(**ONELLM_TX_OPTIONS) as tx:
             tenant = await _ensure_system_tenant(tx)
             user = await tx.sysuser.create(
                 data={

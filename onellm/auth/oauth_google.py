@@ -25,7 +25,7 @@ from fastapi.responses import RedirectResponse
 from onellm.auth import service as auth_service
 from onellm.auth.password import new_security_stamp
 from onellm.config import SETTINGS
-from onellm.db import get_prisma
+from onellm.db import ONELLM_TX_OPTIONS, get_prisma
 from onellm.schemas.token import TokenOut
 from onellm.sync.litellm_shadow import (
     upsert_litellm_team_shadow,
@@ -100,7 +100,7 @@ async def google_callback(request: Request) -> Any:
     if "|" in state:
         _, redirect_to = state.split("|", 1)
 
-    async with db.tx() as tx:
+    async with db.tx(**ONELLM_TX_OPTIONS) as tx:
         link = await tx.sysuserlogin.find_unique(
             where={
                 "login_provider_provider_key": {

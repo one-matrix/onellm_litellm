@@ -37,6 +37,7 @@ from typing import Any, Dict, Optional
 
 from litellm._logging import verbose_proxy_logger
 from litellm.exceptions import BudgetExceededError
+from onellm.db import ONELLM_TX_OPTIONS
 
 _PRE_DEDUCT = "pre_deduct"
 _CONSUMPTION = "consumption"
@@ -171,7 +172,7 @@ async def pre_deduct(
         # Nothing to freeze — caller still wants a tx record for traceability.
         estimated_credits = 0.0
     prisma_client = _get_prisma_client()
-    async with prisma_client.db.tx() as tx:
+    async with prisma_client.db.tx(**ONELLM_TX_OPTIONS) as tx:
         wallet = await _find_wallet(tx, tenant_id)
         if wallet is None:
             # Create-on-write so a first-task-for-this-tenant flow works.
@@ -262,7 +263,7 @@ async def charge(
         return {"charged": False, "reason": "zero_amount"}
 
     prisma_client = _get_prisma_client()
-    async with prisma_client.db.tx() as tx:
+    async with prisma_client.db.tx(**ONELLM_TX_OPTIONS) as tx:
         if agent_record_id and await _already_finalised(
             tx, agent_record_id, _CONSUMPTION
         ):
@@ -365,7 +366,7 @@ async def settle(
     actual_credits = max(float(actual_credits or 0), 0.0)
 
     prisma_client = _get_prisma_client()
-    async with prisma_client.db.tx() as tx:
+    async with prisma_client.db.tx(**ONELLM_TX_OPTIONS) as tx:
         if await _already_finalised(tx, agent_record_id, _SETTLEMENT):
             verbose_proxy_logger.debug(
                 "credits.wallet.settle: task=%s already settled — skipping",
@@ -515,7 +516,7 @@ async def refund(
     if not agent_record_id:
         raise WalletError("credits.wallet.refund: agent_record_id is required")
     prisma_client = _get_prisma_client()
-    async with prisma_client.db.tx() as tx:
+    async with prisma_client.db.tx(**ONELLM_TX_OPTIONS) as tx:
         if await _already_finalised(tx, agent_record_id, _REFUND):
             return {"refunded": False, "reason": "already_refunded"}
         if await _already_finalised(tx, agent_record_id, _SETTLEMENT):
