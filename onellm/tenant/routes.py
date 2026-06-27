@@ -94,15 +94,21 @@ async def list_members(
 
 
 @router.post("/{tenant_id}/members", status_code=status.HTTP_201_CREATED)
-async def invite_member(
+async def create_member(
     tenant_id: str,
     payload: TenantMemberIn,
     identity: CurrentIdentity = Depends(get_current_user),
 ) -> Dict[str, Any]:
     await _require_tenant_role(identity, tenant_id, {"tenant_admin"})
     db = get_prisma()
-    return await tenant_service.invite_member(
-        db, tenant_id=tenant_id, email=payload.email, role_code=payload.role_code
+    return await tenant_service.create_member(
+        db,
+        tenant_id=tenant_id,
+        email=payload.email,
+        password=payload.password,
+        name=payload.name,
+        user_name=payload.user_name,
+        role_code=payload.role_code,
     )
 
 

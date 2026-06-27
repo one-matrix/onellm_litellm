@@ -43,6 +43,7 @@ from pydantic import BaseModel, Field
 
 from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from onellm.billing_scope import resolve_credit_tenant_id
 from onellm.pay import get_channel, is_channel_supported, supported_channels
 from onellm.pay.channels.types import CreatePaymentInput
 
@@ -93,10 +94,6 @@ def _is_admin(user_api_key_dict: UserAPIKeyAuth) -> bool:
 def _require_admin(user_api_key_dict: UserAPIKeyAuth) -> None:
     if not _is_admin(user_api_key_dict):
         raise HTTPException(status_code=403, detail={"error": "Admin role required"})
-
-
-def _resolve_tenant(user_api_key_dict: UserAPIKeyAuth) -> Optional[str]:
-    return user_api_key_dict.team_id or user_api_key_dict.user_id or _DEFAULT_TENANT
 
 
 def _resolve_user_id(user_api_key_dict: UserAPIKeyAuth) -> str:
@@ -430,7 +427,12 @@ async def create_order(
 
     prisma_client = _get_prisma_client()
     user_id = _resolve_user_id(user_api_key_dict)
-    tenant_id = _resolve_tenant(user_api_key_dict)
+    tenant_id = await resolve_credit_tenant_id(
+        prisma_client=prisma_client,
+        request=request,
+        user_api_key_dict=user_api_key_dict,
+        default_tenant=_DEFAULT_TENANT,
+    )
     out_trade_no = _generate_out_trade_no()
     timeout = payload.timeout_minutes or _DEFAULT_TIMEOUT_MIN
     expire_at = datetime.now(timezone.utc) + timedelta(minutes=timeout)

@@ -37,11 +37,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from litellm.proxy._types import LitellmUserRoles, UserAPIKeyAuth
 from litellm.proxy.auth.user_api_key_auth import user_api_key_auth
+from onellm.billing_scope import resolve_credit_tenant_id
 
 router = APIRouter()
 
@@ -63,19 +64,6 @@ _DEFAULT_TENANT = "default"
 
 # Default new-user gift on wallet auto-init. Matches the docs/temp reference.
 _INITIAL_GIFT_CREDITS = 10.0
-
-
-def _resolve_tenant_id(
-    user_api_key_dict: UserAPIKeyAuth, override: Optional[str] = None
-) -> str:
-    """Pick the tenant_id for credit operations.
-
-    - Admin callers may pass ``override`` to read/write any tenant.
-    - Otherwise fall back to ``team_id`` (preferred) or ``user_id``.
-    """
-    if override and _is_admin(user_api_key_dict):
-        return override
-    return user_api_key_dict.team_id or user_api_key_dict.user_id or _DEFAULT_TENANT
 
 
 def _is_admin(user_api_key_dict: UserAPIKeyAuth) -> bool:
@@ -242,11 +230,17 @@ async def _ensure_wallet_with_gift(prisma_client, tenant_id: str) -> Dict[str, A
     dependencies=[Depends(user_api_key_auth)],
 )
 async def get_my_wallet(
+    request: Request,
     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
     """Return the calling tenant's wallet. Auto-creates on first call."""
     prisma_client = _get_prisma_client()
-    tenant_id = _resolve_tenant_id(user_api_key_dict)
+    tenant_id = await resolve_credit_tenant_id(
+        prisma_client=prisma_client,
+        request=request,
+        user_api_key_dict=user_api_key_dict,
+        default_tenant=_DEFAULT_TENANT,
+    )
     wallet = await _ensure_wallet_with_gift(prisma_client, tenant_id)
     return _serialize_wallet(wallet)
 
@@ -491,6 +485,7 @@ async def adjust_wallet(
     dependencies=[Depends(user_api_key_auth)],
 )
 async def list_transactions(
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=200),
     tx_type: Optional[str] = None,
@@ -502,7 +497,13 @@ async def list_transactions(
 ):
     """List the current tenant's transactions. Admins may pass ``tenant_id``."""
     prisma_client = _get_prisma_client()
-    resolved = _resolve_tenant_id(user_api_key_dict, override=tenant_id)
+    resolved = await resolve_credit_tenant_id(
+        prisma_client=prisma_client,
+        request=request,
+        user_api_key_dict=user_api_key_dict,
+        override=tenant_id,
+        default_tenant=_DEFAULT_TENANT,
+    )
 
     where: Dict[str, Any] = {"tenant_id": resolved, "NOT": {"tx_type": "pre_deduct"}}
     if tx_type:
@@ -560,6 +561,7 @@ def _parse_date(value: str, end_of_day: bool = False) -> datetime:
 )
 async def create_recharge_order(
     payload: RechargeRequest,
+    request: Request,
     user_api_key_dict: UserAPIKeyAuth = Depends(user_api_key_auth),
 ):
     """Simulated recharge — credits the paid balance immediately.
@@ -569,7 +571,12 @@ async def create_recharge_order(
     that for development.
     """
     prisma_client = _get_prisma_client()
-    tenant_id = _resolve_tenant_id(user_api_key_dict)
+    tenant_id = await resolve_credit_tenant_id(
+        prisma_client=prisma_client,
+        request=request,
+        user_api_key_dict=user_api_key_dict,
+        default_tenant=_DEFAULT_TENANT,
+    )
 
     pkg_row = await prisma_client.db.creditpackage.find_unique(
         where={"id": payload.package_id}

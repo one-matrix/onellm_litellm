@@ -37,6 +37,9 @@ class TenantCreateIn(BaseModel):
 
 class TenantMemberIn(BaseModel):
     email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    name: Optional[str] = Field(default=None, max_length=100)
+    user_name: Optional[str] = Field(default=None, max_length=256)
     role_code: str = Field(description="e.g. tenant_admin, user, billing, viewer")
 
 

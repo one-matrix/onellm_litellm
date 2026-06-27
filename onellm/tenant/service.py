@@ -1,4 +1,4 @@
-"""Tenant + member service: invites, role updates, removals.
+"""Tenant + member service: account creation, role updates, removals.
 
 Membership rule: a user is a "member" of a tenant if any sys_user_roles row
 exists with that (user_id, tenant_id). The same user may carry multiple
@@ -8,7 +8,7 @@ role codes inside one tenant (sys_user_roles is many-to-many).
 from datetime import datetime
 from typing import Any, List, Optional
 
-from onellm.auth.password import new_security_stamp
+from onellm.auth.password import hash_password, new_security_stamp
 from onellm.db import ONELLM_TX_OPTIONS
 from onellm.exceptions import (
     EmailAlreadyRegistered,
@@ -114,34 +114,71 @@ async def list_members(db: Any, *, tenant_id: str) -> List[dict]:
     return list(grouped.values())
 
 
-async def _find_or_invite_user(db: Any, *, email: str) -> Any:
-    """Look up a user by email; if missing, create a shadow account.
+async def _find_or_create_user(
+    db: Any,
+    *,
+    email: str,
+    password: str,
+    tenant_id: str,
+    name: Optional[str],
+    user_name: Optional[str],
+) -> tuple[Any, Optional[str]]:
+    """Look up a user by email; if missing, create a password-login account.
 
-    The invited user has no password yet — they activate via OAuth or by
-    using the "forgot password" flow once that exists. For now we mark the
-    account inactive until the user finishes setup (MVP: any login attempt
-    on this account fails until the user resets password).
+    Existing users are not password-reset here. The supplied password is only
+    written when a placeholder account still has no password hash.
     """
     normalized = _normalize(email)
     if not normalized:
         raise EmailAlreadyRegistered("Invalid email")
+    normalized_user_name = _normalize(user_name or email)
+    password_hash = hash_password(password)
     existing = await db.sysuser.find_unique(where={"normalized_email": normalized})
     if existing is not None:
-        return existing
-    return await db.sysuser.create(
+        data: dict = {}
+        if name is not None and name != existing.name:
+            data["name"] = name
+        if user_name is not None and user_name != existing.user_name:
+            data["user_name"] = user_name
+            data["normalized_user_name"] = normalized_user_name
+        if existing.tenant_id is None:
+            data["tenant_id"] = tenant_id
+        written_password_hash = None
+        if not existing.password_hash:
+            data["password_hash"] = password_hash
+            data["security_stamp"] = new_security_stamp()
+            written_password_hash = password_hash
+        if data:
+            existing = await db.sysuser.update(where={"id": existing.id}, data=data)
+        return existing, written_password_hash
+    user = await db.sysuser.create(
         data={
+            "tenant_id": tenant_id,
+            "name": name,
             "email": email,
             "normalized_email": normalized,
-            "user_name": email,
-            "normalized_user_name": normalized,
+            "user_name": user_name or email,
+            "normalized_user_name": normalized_user_name,
+            "email_confirmed": False,
+            "password_hash": password_hash,
             "security_stamp": new_security_stamp(),
             "role_global": "user",
-            "is_active": True,  # they can be invited even if they have no pwd
+            "is_active": True,
         }
     )
+    return user, password_hash
 
 
-async def invite_member(db: Any, *, tenant_id: str, email: str, role_code: str) -> dict:
+async def create_member(
+    db: Any,
+    *,
+    tenant_id: str,
+    email: str,
+    password: str,
+    role_code: str,
+    name: Optional[str] = None,
+    user_name: Optional[str] = None,
+) -> dict:
     tenant = await db.systenant.find_unique(where={"id": tenant_id})
     if tenant is None or tenant.is_deleted:
         raise NotFound("Tenant not found")
@@ -149,10 +186,17 @@ async def invite_member(db: Any, *, tenant_id: str, email: str, role_code: str) 
     if role is None:
         raise NotFound(f"Role {role_code!r} not found")
     if role.code == "root":
-        raise PermissionDenied("Cannot assign the root role through tenant invitation")
+        raise PermissionDenied("Cannot assign the root role through tenant member creation")
 
     async with db.tx(**ONELLM_TX_OPTIONS) as tx:
-        user = await _find_or_invite_user(tx, email=email)
+        user, password_hash = await _find_or_create_user(
+            tx,
+            email=email,
+            password=password,
+            tenant_id=tenant_id,
+            name=name,
+            user_name=user_name,
+        )
         await tx.sysuserrole.upsert(
             where={
                 "user_id_role_id_tenant_id": {
@@ -172,7 +216,13 @@ async def invite_member(db: Any, *, tenant_id: str, email: str, role_code: str) 
         )
         # Make sure the LiteLLM shadow row exists for this user so spend
         # tracking still has a row to attach against.
-        await upsert_litellm_user_shadow(tx, user=user, tenant=tenant)
+        await upsert_litellm_user_shadow(
+            tx,
+            user=user,
+            tenant=tenant,
+            password_hash=password_hash,
+            tenant_role_codes=(role.code,),
+        )
     return {
         "user": {
             "id": user.id,
