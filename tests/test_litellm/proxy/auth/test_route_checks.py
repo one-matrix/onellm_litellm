@@ -965,6 +965,80 @@ def test_rag_routes_are_llm_api_routes(route):
     assert RouteChecks.is_llm_api_route(route) is True
 
 
+@pytest.mark.parametrize(
+    "route",
+    [
+        "/media/generations",
+        "/v1/media/generations",
+        "/media/generations/sync",
+        "/v1/media/generations/sync",
+        "/v1/media/tasks/25706250",
+        "/v1/media/models",
+        "/v1/media/models/gpt-image-2",
+        "/v1/media/models/gpt-image-2/pricing",
+    ],
+)
+def test_media_routes_are_llm_api_routes(route):
+    """OneLLM media endpoints are data-plane routes, not admin-only routes."""
+
+    assert RouteChecks.is_llm_api_route(route) is True
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "/v1/media/generations",
+        "/v1/media/generations/sync",
+        "/v1/media/tasks/25706250",
+    ],
+)
+def test_org_admin_can_access_media_routes(route):
+    """Tenant/org admins should be able to call media generation with their key."""
+
+    user_obj = LiteLLM_UserTable(
+        user_id="org-admin-user",
+        user_email="org-admin@example.com",
+        user_role=LitellmUserRoles.ORG_ADMIN.value,
+    )
+    valid_token = UserAPIKeyAuth(
+        user_id="org-admin-user",
+        user_role=LitellmUserRoles.ORG_ADMIN.value,
+    )
+    request = MagicMock(spec=Request)
+    request.query_params = {}
+
+    RouteChecks.non_proxy_admin_allowed_routes_check(
+        user_obj=user_obj,
+        _user_role=LitellmUserRoles.ORG_ADMIN.value,
+        route=route,
+        request=request,
+        valid_token=valid_token,
+        request_data={},
+    )
+
+
+def test_virtual_key_llm_api_routes_allows_media_routes():
+    """Virtual keys restricted to llm_api_routes can still use OneLLM media."""
+
+    valid_token = UserAPIKeyAuth(
+        user_id="test_user",
+        allowed_routes=["llm_api_routes"],
+    )
+
+    for route in [
+        "/v1/media/generations",
+        "/v1/media/generations/sync",
+        "/v1/media/tasks/25706250",
+    ]:
+        assert (
+            RouteChecks.is_virtual_key_allowed_to_call_route(
+                route=route,
+                valid_token=valid_token,
+            )
+            is True
+        )
+
+
 def test_rag_routes_accessible_to_internal_user_viewer():
     """
     Test that internal_user_viewer can access RAG routes (/rag/ingest, /rag/query).

@@ -345,9 +345,11 @@ from litellm.proxy.management_endpoints.callback_management_endpoints import (
 # (backend/onellm/). Imported lazily inside a try/except so a pure upstream
 # install without the onellm package still boots.
 try:
+    from onellm.credits import WalletChargeLogger
     from onellm.credits.routes import router as credit_management_router
     from onellm.pay.routes import router as pay_management_router
 except ImportError:
+    WalletChargeLogger = None
     credit_management_router = None
     pay_management_router = None
 from litellm.proxy.management_endpoints.common_utils import (
@@ -600,6 +602,16 @@ except ImportError:
     enterprise_proxy_config = None
 ###################
 
+
+def _register_onellm_wallet_callback() -> None:
+    """Attach OneLLM wallet billing to LiteLLM's callback bus when available."""
+    if WalletChargeLogger is None:
+        return
+    if any(isinstance(callback, WalletChargeLogger) for callback in litellm.callbacks):
+        return
+    litellm.logging_callback_manager.add_litellm_callback(WalletChargeLogger())
+
+
 server_root_path = get_server_root_path()
 _license_check = LicenseCheck()
 premium_user: bool = _license_check.is_premium()
@@ -849,6 +861,8 @@ async def proxy_startup_event(app: FastAPI):  # noqa: PLR0915
                 verbose_proxy_logger.warning(f"Password migration skipped: {e}")
 
         asyncio.create_task(_run_pw_migration())
+
+        _register_onellm_wallet_callback()
 
         # OneLLM platform superadmin bootstrap. Optional so a pure upstream
         # LiteLLM install without the onellm package keeps booting.

@@ -56,6 +56,24 @@ def _kwargs_for(
     }
 
 
+def test_proxy_startup_registers_wallet_callback_once(monkeypatch):
+    """OneLLM startup should attach wallet billing for normal chat routes."""
+    import litellm
+    import litellm.proxy.proxy_server as proxy_server
+
+    monkeypatch.setattr(litellm, "callbacks", [], raising=False)
+
+    proxy_server._register_onellm_wallet_callback()
+    proxy_server._register_onellm_wallet_callback()
+
+    wallet_callbacks = [
+        callback
+        for callback in litellm.callbacks
+        if isinstance(callback, WalletChargeLogger)
+    ]
+    assert len(wallet_callbacks) == 1
+
+
 @pytest.mark.asyncio
 async def test_callback_debits_wallet_on_success(fake_prisma):
     await _seed_wallet(fake_prisma, paid=100.0)

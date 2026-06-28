@@ -426,6 +426,15 @@ class LiteLLMRoutes(enum.Enum):
         "/v1/rag/ingest",
         "/rag/query",
         "/v1/rag/query",
+        # OneLLM native media data-plane routes.
+        "/media/generations",
+        "/v1/media/generations",
+        "/media/generations/sync",
+        "/v1/media/generations/sync",
+        "/v1/media/tasks/{task_id}",
+        "/v1/media/models",
+        "/v1/media/models/{model}",
+        "/v1/media/models/{model}/pricing",
     ]
 
     anthropic_routes = [

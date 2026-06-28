@@ -103,7 +103,7 @@ class _DB:
         self.creditwallet = _Table(self.wallets)
         self.credittransaction = _Table(self.txs)
 
-    def tx(self):
+    def tx(self, *args, **kwargs):
         # Single-process fake — we don't simulate isolation; tests don't need it.
         db_self = self
 
