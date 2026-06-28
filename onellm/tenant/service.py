@@ -6,7 +6,7 @@ role codes inside one tenant (sys_user_roles is many-to-many).
 """
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from onellm.auth.password import hash_password, new_security_stamp
 from onellm.db import ONELLM_TX_OPTIONS
@@ -21,9 +21,41 @@ from onellm.sync.litellm_shadow import (
     upsert_litellm_user_shadow,
 )
 
+PROTECTED_TENANT_ADMIN_ROLE = "tenant_admin"
+ROOT_ROLE = "root"
+
 
 def _normalize(text: Optional[str]) -> Optional[str]:
     return text.upper().strip() if text else None
+
+
+def _role_code_set(role_codes: Iterable[str]) -> set[str]:
+    return {code for code in role_codes if code}
+
+
+def _ensure_member_role_codes_can_be_assigned(role_codes: Iterable[str]) -> None:
+    codes = _role_code_set(role_codes)
+    if ROOT_ROLE in codes:
+        raise PermissionDenied("Cannot assign the root role through tenant membership")
+    if PROTECTED_TENANT_ADMIN_ROLE in codes:
+        raise PermissionDenied(
+            "tenant_admin can only be assigned by registration or tenant creation"
+        )
+
+
+def _ensure_target_member_is_not_tenant_admin(role_codes: Iterable[str]) -> None:
+    if PROTECTED_TENANT_ADMIN_ROLE in _role_code_set(role_codes):
+        raise PermissionDenied(
+            "tenant_admin accounts and roles cannot be changed or removed"
+        )
+
+
+async def _get_member_role_codes(db: Any, *, tenant_id: str, user_id: str) -> set[str]:
+    memberships = await db.sysuserrole.find_many(
+        where={"user_id": user_id, "tenant_id": tenant_id},
+        include={"role": True},
+    )
+    return {m.role.code for m in memberships if m.role is not None}
 
 
 async def list_my_memberships(db: Any, *, user_id: str) -> List[dict]:
@@ -185,8 +217,7 @@ async def create_member(
     role = await db.sysrole.find_unique(where={"code": role_code})
     if role is None:
         raise NotFound(f"Role {role_code!r} not found")
-    if role.code == "root":
-        raise PermissionDenied("Cannot assign the root role through tenant member creation")
+    _ensure_member_role_codes_can_be_assigned((role.code,))
 
     async with db.tx(**ONELLM_TX_OPTIONS) as tx:
         user, password_hash = await _find_or_create_user(
@@ -243,7 +274,12 @@ async def update_member_roles(
     role_codes: List[str],
     actor_id: str,
 ) -> dict:
-    if user_id == actor_id and "tenant_admin" not in role_codes:
+    existing_role_codes = await _get_member_role_codes(
+        db, tenant_id=tenant_id, user_id=user_id
+    )
+    _ensure_target_member_is_not_tenant_admin(existing_role_codes)
+
+    if user_id == actor_id and PROTECTED_TENANT_ADMIN_ROLE not in role_codes:
         # Admins would otherwise be able to demote themselves out of the role
         # they need to manage members — surface as a clear error early.
         raise PermissionDenied("Cannot strip your own tenant_admin role")
@@ -253,8 +289,7 @@ async def update_member_roles(
     missing = set(role_codes) - found_codes
     if missing:
         raise NotFound(f"Unknown role codes: {sorted(missing)}")
-    if "root" in found_codes:
-        raise PermissionDenied("root role cannot be granted inside a tenant scope")
+    _ensure_member_role_codes_can_be_assigned(found_codes)
 
     user = await db.sysuser.find_unique(where={"id": user_id})
     if user is None or user.is_deleted:
@@ -288,6 +323,11 @@ async def update_member_roles(
 async def remove_member(
     db: Any, *, tenant_id: str, user_id: str, actor_id: str
 ) -> None:
+    existing_role_codes = await _get_member_role_codes(
+        db, tenant_id=tenant_id, user_id=user_id
+    )
+    _ensure_target_member_is_not_tenant_admin(existing_role_codes)
+
     if user_id == actor_id:
         raise PermissionDenied("Cannot remove yourself; transfer ownership first.")
     deleted = await db.sysuserrole.delete_many(
