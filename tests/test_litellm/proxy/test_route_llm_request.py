@@ -20,7 +20,6 @@ from litellm.proxy.route_llm_request import route_request
         "acompletion",
         "aembedding",
         "aimage_generation",
-        "amedia_generation",
         "aspeech",
         "atranscription",
         "amoderation",

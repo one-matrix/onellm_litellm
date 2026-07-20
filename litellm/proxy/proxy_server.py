@@ -330,7 +330,6 @@ from litellm.proxy.hooks.prompt_injection_detection import (
 )
 from litellm.proxy.hooks.proxy_track_cost_callback import _ProxyDBLogger
 from litellm.proxy.image_endpoints.endpoints import router as image_router
-from litellm.proxy.media_endpoints.endpoints import router as media_router
 from litellm.proxy.litellm_pre_call_utils import add_litellm_data_to_request
 from litellm.proxy.management_endpoints.budget_management_endpoints import (
     router as budget_management_router,
@@ -341,17 +340,6 @@ from litellm.proxy.management_endpoints.cache_settings_endpoints import (
 from litellm.proxy.management_endpoints.callback_management_endpoints import (
     router as callback_management_endpoints_router,
 )
-# Credit + pay management endpoints now live under the OneLLM control plane
-# (backend/onellm/). Imported lazily inside a try/except so a pure upstream
-# install without the onellm package still boots.
-try:
-    from onellm.credits import WalletChargeLogger
-    from onellm.credits.routes import router as credit_management_router
-    from onellm.pay.routes import router as pay_management_router
-except ImportError:
-    WalletChargeLogger = None
-    credit_management_router = None
-    pay_management_router = None
 from litellm.proxy.management_endpoints.common_utils import (
     _user_has_admin_privileges,
     _user_has_admin_view,
@@ -603,15 +591,6 @@ except ImportError:
 ###################
 
 
-def _register_onellm_wallet_callback() -> None:
-    """Attach OneLLM wallet billing to LiteLLM's callback bus when available."""
-    if WalletChargeLogger is None:
-        return
-    if any(isinstance(callback, WalletChargeLogger) for callback in litellm.callbacks):
-        return
-    litellm.logging_callback_manager.add_litellm_callback(WalletChargeLogger())
-
-
 server_root_path = get_server_root_path()
 _license_check = LicenseCheck()
 premium_user: bool = _license_check.is_premium()
@@ -861,19 +840,6 @@ async def proxy_startup_event(app: FastAPI):  # noqa: PLR0915
                 verbose_proxy_logger.warning(f"Password migration skipped: {e}")
 
         asyncio.create_task(_run_pw_migration())
-
-        _register_onellm_wallet_callback()
-
-        # OneLLM platform superadmin bootstrap. Optional so a pure upstream
-        # LiteLLM install without the onellm package keeps booting.
-        try:
-            from onellm.bootstrap import ensure_superadmin as _onellm_ensure_superadmin
-
-            asyncio.create_task(_onellm_ensure_superadmin())
-        except ImportError:
-            verbose_proxy_logger.debug(
-                "OneLLM control plane not installed; skipping superadmin bootstrap."
-            )
 
     ProxyStartupEvent._initialize_startup_logging(
         llm_router=llm_router,
@@ -15363,7 +15329,6 @@ app.include_router(video_router)
 app.include_router(container_router)
 app.include_router(search_router)
 app.include_router(image_router)
-app.include_router(media_router)
 app.include_router(fine_tuning_router)
 app.include_router(credential_router)
 app.include_router(llm_passthrough_router)
@@ -15384,10 +15349,6 @@ app.include_router(ui_crud_endpoints_router)
 app.include_router(openai_files_router)
 app.include_router(team_callback_router)
 app.include_router(budget_management_router)
-if credit_management_router is not None:
-    app.include_router(credit_management_router)
-if pay_management_router is not None:
-    app.include_router(pay_management_router)
 app.include_router(model_management_router)
 app.include_router(model_access_group_management_router)
 app.include_router(tag_management_router)
@@ -15402,15 +15363,6 @@ app.include_router(enterprise_router)
 app.include_router(ui_discovery_endpoints_router)
 # Eager: /models/{name}:method overlaps with the OpenAI /models endpoint.
 app.include_router(google_router)
-
-# OneLLM control plane (user / tenant / RBAC / OAuth). Optional so a pure
-# upstream LiteLLM install without the onellm package keeps booting.
-try:
-    from onellm.main import router as onellm_router
-
-    app.include_router(onellm_router)
-except ImportError:
-    verbose_proxy_logger.debug("OneLLM control plane not installed; skipping.")
 
 attach_lazy_features(app)
 app.add_middleware(

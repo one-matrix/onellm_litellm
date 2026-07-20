@@ -415,7 +415,7 @@ Support for more providers. Missing a provider or LLM Platform, raise a [feature
 3. Install dependencies `uv sync --all-extras --group proxy-dev`
 4. `uv run prisma generate`
 5. `prisma generate`
-6. Start proxy backend `python main.py` (defaults to `--config config.yaml --port 4000`)
+6. Start proxy backend `python litellm/proxy/proxy_cli.py`
 
 #### Frontend
 1. Navigate to `ui/litellm-dashboard`

@@ -4,7 +4,7 @@
 .PHONY: help test test-unit test-unit-llms test-unit-proxy-guardrails test-unit-proxy-core test-unit-proxy-misc \
 	test-unit-integrations test-unit-core-utils test-unit-other test-unit-root \
 	test-proxy-unit-a test-proxy-unit-b test-integration test-unit-helm \
-	info lint lint-dev format schema-fix schema-check \
+	info lint lint-dev format \
 	install-dev install-proxy-dev install-test-deps \
 	install-helm-unittest check-circular-imports check-import-safety
 
@@ -122,22 +122,8 @@ check-circular-imports: install-dev
 check-import-safety: install-dev
 	@$(UV_RUN) python -c "from litellm import *; print('[from litellm import *] OK! no issues!');" || (echo '🚨 import failed, this means you introduced unprotected imports! 🚨'; exit 1)
 
-# Auto-add @@schema("public") to any model/enum that lacks it across all
-# three schema.prisma copies. Run after merging upstream BerriAI/litellm
-# changes so the multiSchema preview stays valid.
-schema-fix:
-	$(UV_RUN) python scripts/annotate_prisma_public_schema.py --root .
-	$(UV_RUN) prisma format --schema=schema.prisma
-	cp schema.prisma litellm/proxy/schema.prisma
-	cp schema.prisma litellm-proxy-extras/litellm_proxy_extras/schema.prisma
-
-# CI guard — exit 1 if any model is missing @@schema (i.e. someone merged
-# upstream without running schema-fix).
-schema-check:
-	$(UV_RUN) python scripts/annotate_prisma_public_schema.py --check --root .
-
 # Combined linting (matches test-linting.yml workflow)
-lint: format-check lint-ruff lint-mypy check-circular-imports check-import-safety schema-check
+lint: format-check lint-ruff lint-mypy check-circular-imports check-import-safety
 
 # Faster linting for local development (only checks changed code)
 lint-dev: lint-format-changed lint-mypy check-circular-imports check-import-safety
