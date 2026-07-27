@@ -47,6 +47,7 @@ model LiteLLM_CredentialsTable {
 
 // Models on proxy
 model LiteLLM_ProxyModelTable {
+<<<<<<< HEAD
   model_id       String   @id @default(uuid())
   model_name     String
   litellm_params Json
@@ -55,6 +56,17 @@ model LiteLLM_ProxyModelTable {
   created_by     String
   updated_at     DateTime @default(now()) @updatedAt @map("updated_at")
   updated_by     String
+=======
+  model_id String @id @default(uuid())
+  model_name String
+  litellm_params Json
+  model_info Json?
+  blocked Boolean @default(false)
+  created_at    DateTime               @default(now()) @map("created_at")
+  created_by String
+  updated_at    DateTime               @default(now()) @updatedAt @map("updated_at")
+  updated_by String
+>>>>>>> origin/litellm_internal_staging
 }
 
 // Agents on proxy
@@ -265,6 +277,7 @@ model LiteLLM_UserTable {
 }
 
 model LiteLLM_ObjectPermissionTable {
+<<<<<<< HEAD
   object_permission_id String                      @id @default(uuid())
   mcp_servers          String[]                    @default([])
   mcp_access_groups    String[]                    @default([])
@@ -283,10 +296,32 @@ model LiteLLM_ObjectPermissionTable {
   users                LiteLLM_UserTable[]
   end_users            LiteLLM_EndUserTable[]
   agents_table         LiteLLM_AgentsTable[]
+=======
+  object_permission_id  String         @id @default(uuid())
+  mcp_servers           String[]       @default([])
+  mcp_access_groups     String[]       @default([])
+  mcp_tool_permissions  Json?          // Tool-level permissions for MCP servers. Format: {"server_id": ["tool_name_1", "tool_name_2"]}
+  vector_stores         String[]       @default([])
+  agents                String[]       @default([])
+  agent_access_groups   String[]       @default([])
+  models                String[]       @default([])
+  blocked_tools         String[]       @default([]) // Tool names blocked for any key/team/user with this permission
+  mcp_toolsets          String[]       @default([]) // Toolset IDs granted to this key/team/user
+  search_tools          String[]       @default([]) // search_tool_name values this key/team/user may call
+  mcp_tool_search_enabled Boolean?
+  teams                 LiteLLM_TeamTable[]
+  projects              LiteLLM_ProjectTable[]
+  verification_tokens   LiteLLM_VerificationToken[]
+  organizations         LiteLLM_OrganizationTable[]
+  users                 LiteLLM_UserTable[]
+  end_users             LiteLLM_EndUserTable[]
+  agents_table          LiteLLM_AgentsTable[]
+>>>>>>> origin/litellm_internal_staging
 }
 
 // Holds the MCP server configuration 
 model LiteLLM_MCPServerTable {
+<<<<<<< HEAD
   server_id                    String    @id @default(uuid())
   server_name                  String?
   alias                        String?
@@ -308,11 +343,40 @@ model LiteLLM_MCPServerTable {
   tool_name_to_description     Json?     @default("{}")
   extra_headers                String[]  @default([])
   static_headers               Json?     @default("{}")
+=======
+  server_id    String         @id @default(uuid())
+  server_name  String?
+  alias        String?
+  description  String?
+  instructions String?
+  url          String?
+  spec_path    String?
+  transport    String         @default("sse")
+  auth_type    String?        
+  credentials  Json?          @default("{}")
+  created_at   DateTime?      @default(now()) @map("created_at")
+  created_by   String?
+  updated_at   DateTime?      @default(now()) @updatedAt @map("updated_at")
+  updated_by   String?
+  mcp_info     Json?          @default("{}")
+  mcp_access_groups String[]
+  allowed_tools String[]      @default([])
+  tool_name_to_display_name Json? @default("{}")
+  tool_name_to_description   Json? @default("{}")
+  extra_headers String[]    @default([])
+  static_headers Json?        @default("{}")
+  // Admin-configured environment variables interpolated into static_headers
+  // via ${NAME} syntax. Stored as an array of
+  // {name, value, scope, description}. scope is "global" (value used as-is)
+  // or "user" (value supplied per-user via LiteLLM_MCPUserEnvVars).
+  env_vars     Json?          @default("[]")
+>>>>>>> origin/litellm_internal_staging
   // Health check status
   status                       String?   @default("unknown")
   last_health_check            DateTime?
   health_check_error           String?
   // Stdio-specific fields
+<<<<<<< HEAD
   command                      String?
   args                         String[]  @default([])
   env                          Json?     @default("{}")
@@ -326,6 +390,33 @@ model LiteLLM_MCPServerTable {
   byok_description             String[]  @default([])
   byok_api_key_help_url        String?
   source_url                   String?
+=======
+  command      String?
+  args         String[]       @default([])
+  env          Json?          @default("{}")
+  issuer             String?
+  authorization_url  String?
+  token_url          String?
+  registration_url   String?
+  oauth2_flow        String?
+  token_exchange_endpoint String?
+  // Named for the RFC 8693 "audience" token-exchange request parameter (that flow only).
+  // RFC 8707 resource indicators are a separate concept, named "resource" in the v2 egress types.
+  audience           String?
+  subject_token_type String?
+  token_exchange_profile String?
+  allow_all_keys Boolean @default(false)
+  available_on_public_internet Boolean @default(true)
+  delegate_auth_to_upstream Boolean @default(false)
+  oauth_passthrough Boolean @default(false)
+  dcr_bridge Boolean?
+  is_byok               Boolean  @default(false)
+  byok_description      String[] @default([])
+  byok_api_key_help_url String?
+  source_url            String?
+  timeout               Float?
+  max_concurrent_requests Int?
+>>>>>>> origin/litellm_internal_staging
   // BYOM submission lifecycle
   approval_status              String?   @default("active")
   submitted_by                 String?
@@ -360,8 +451,40 @@ model LiteLLM_MCPUserCredentials {
   @@unique([user_id, server_id])
 }
 
+// Per-user environment variable values for MCP servers.
+// values_b64 is an encrypted JSON object: {VAR_NAME: "value", ...}.
+model LiteLLM_MCPUserEnvVars {
+  id         String   @id @default(uuid())
+  user_id    String
+  server_id  String
+  values_b64 String
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now()) @updatedAt
+
+  @@unique([user_id, server_id])
+  @@index([user_id])
+  @@index([server_id])
+}
+
+model LiteLLM_MCPServerOAuthClient {
+  server_id   String   @id
+  credentials Json?
+  created_at  DateTime @default(now()) @map("created_at")
+  updated_at  DateTime @default(now()) @updatedAt @map("updated_at")
+}
+
+// The enterprise IdP identity assertion captured at SSO login, one row per user.
+// assertion_b64 is an encrypted JSON payload: {id_token, refresh_token?, issuer?, expires_at?}.
+model LiteLLM_SSOIdentityAssertion {
+  user_id       String   @id
+  assertion_b64 String
+  created_at    DateTime @default(now()) @map("created_at")
+  updated_at    DateTime @default(now()) @updatedAt @map("updated_at")
+}
+
 // Generate Tokens for Proxy
 model LiteLLM_VerificationToken {
+<<<<<<< HEAD
   token                      String                         @id
   key_name                   String?
   key_alias                  String?
@@ -410,6 +533,58 @@ model LiteLLM_VerificationToken {
   litellm_project_table      LiteLLM_ProjectTable?          @relation(fields: [project_id], references: [project_id])
   object_permission          LiteLLM_ObjectPermissionTable? @relation(fields: [object_permission_id], references: [object_permission_id])
   jwt_key_mappings           LiteLLM_JWTKeyMapping[]
+=======
+    token      String   @id
+    key_name   String?
+    key_alias   String?
+    soft_budget_cooldown Boolean @default(false) // key-level state on if budget alerts need to be cooled down
+    spend      Float    @default(0.0)
+    expires    DateTime?
+    models     String[]
+    aliases    Json  @default("{}")
+    config     Json  @default("{}")
+    router_settings Json? @default("{}")
+    user_id    String?
+    team_id    String?
+    agent_id   String?
+    project_id String?
+    permissions Json @default("{}")
+    max_parallel_requests Int?
+    metadata   Json  @default("{}")
+    blocked Boolean?
+    tpm_limit     BigInt?
+    rpm_limit     BigInt?
+    max_budget Float?    
+    budget_duration String? 
+    budget_reset_at DateTime?
+    allowed_cache_controls String[] @default([])
+    allowed_routes   String[] @default([])
+    key_type         String?
+    policies         String[] @default([])
+    access_group_ids String[] @default([])
+    model_spend      Json @default("{}")
+    model_max_budget Json @default("{}")
+    budget_fallbacks Json @default("{}")
+    budget_id String?
+    organization_id String?
+    object_permission_id String?
+    created_at      DateTime?               @default(now()) @map("created_at")
+    created_by String?
+    updated_at      DateTime?               @default(now()) @updatedAt @map("updated_at")
+    updated_by String?
+    last_active     DateTime?  // When this key was last used
+    rotation_count   Int?       @default(0) // Number of times key has been rotated
+    auto_rotate      Boolean?   @default(false) // Whether this key should be auto-rotated
+    rotation_interval String?   // How often to rotate (e.g., "30d", "90d")
+    last_rotation_at DateTime?  // When this key was last rotated
+    key_rotation_at  DateTime?  // When this key should next be rotated
+    budget_limits Json? // per-model budget limits for the key
+    litellm_budget_table LiteLLM_BudgetTable?   @relation(fields: [budget_id], references: [budget_id])
+    litellm_organization_table LiteLLM_OrganizationTable?   @relation(fields: [organization_id], references: [organization_id])
+    litellm_project_table LiteLLM_ProjectTable?   @relation(fields: [project_id], references: [project_id])
+    object_permission LiteLLM_ObjectPermissionTable?   @relation(fields: [object_permission_id], references: [object_permission_id])
+    jwt_key_mappings LiteLLM_JWTKeyMapping[]
+>>>>>>> origin/litellm_internal_staging
 
   // SELECT COUNT(*) FROM (SELECT "public"."LiteLLM_VerificationToken"."token" FROM "public"."LiteLLM_VerificationToken" WHERE ("public"."LiteLLM_VerificationToken"."user_id" = $1 AND ("public"."LiteLLM_VerificationToken"."team_id" IS NULL OR "public"."LiteLLM_VerificationToken"."team_id" <> $2)) OFFSET $3 ) AS "sub"
   // SELECT ... FROM "public"."LiteLLM_VerificationToken" WHERE "public"."LiteLLM_VerificationToken"."user_id" = $1 OFFSET $2
@@ -453,6 +628,7 @@ model LiteLLM_DeprecatedVerificationToken {
 
 // Audit table for deleted keys - preserves spend and key information for historical tracking
 model LiteLLM_DeletedVerificationToken {
+<<<<<<< HEAD
   id                     String    @id @default(uuid())
   token                  String // Original token (hashed)
   key_name               String?
@@ -510,6 +686,67 @@ model LiteLLM_DeletedVerificationToken {
   @@index([organization_id])
   @@index([key_alias])
   @@index([created_at])
+=======
+    id                      String   @id @default(uuid())
+    token                   String   // Original token (hashed)
+    key_name                String?
+    key_alias               String?
+    soft_budget_cooldown    Boolean  @default(false)
+    spend                   Float    @default(0.0)
+    expires                 DateTime?
+    models                  String[]
+    aliases                 Json     @default("{}")
+    config                  Json     @default("{}")
+    user_id                 String?
+    team_id                 String?
+    agent_id   String?
+    project_id              String?
+    permissions             Json     @default("{}")
+    max_parallel_requests   Int?
+    metadata                Json     @default("{}")
+    blocked                 Boolean?
+    tpm_limit               BigInt?
+    rpm_limit               BigInt?
+    max_budget              Float?
+    budget_duration         String?
+    budget_reset_at         DateTime?
+    allowed_cache_controls  String[] @default([])
+    allowed_routes          String[] @default([])
+    key_type                String?
+    policies                String[] @default([])
+    access_group_ids String[] @default([])
+    model_spend             Json     @default("{}")
+    model_max_budget        Json     @default("{}")
+    budget_fallbacks        Json     @default("{}")
+    router_settings  Json? @default("{}")
+    budget_id               String?
+    organization_id         String?
+    object_permission_id    String?
+    created_at              DateTime? // Original creation timestamp
+    created_by              String?   // Original creator
+    updated_at              DateTime? // Last update timestamp before deletion
+    updated_by              String?   // Last user who updated before deletion
+    last_active             DateTime? // When this key was last used before deletion
+    rotation_count          Int?      @default(0)
+    auto_rotate             Boolean?  @default(false)
+    rotation_interval       String?
+    last_rotation_at        DateTime?
+    key_rotation_at         DateTime?
+    
+    // Deletion metadata
+    deleted_at              DateTime  @default(now()) @map("deleted_at")
+    deleted_by              String?   @map("deleted_by") // User who deleted the key
+    deleted_by_api_key      String?   @map("deleted_by_api_key") // API key hash that performed the deletion
+    litellm_changed_by      String?   @map("litellm_changed_by") // From litellm-changed-by header if provided
+    
+    @@index([token])
+    @@index([deleted_at])
+    @@index([user_id])
+    @@index([team_id])
+    @@index([organization_id])
+    @@index([key_alias])
+    @@index([created_at])
+>>>>>>> origin/litellm_internal_staging
 }
 
 model LiteLLM_EndUserTable {
@@ -673,6 +910,7 @@ model LiteLLM_AuditLog {
 
 // Track daily user spend metrics per model and key
 model LiteLLM_DailyUserSpend {
+<<<<<<< HEAD
   id                          String   @id @default(uuid())
   user_id                     String?
   date                        String
@@ -692,6 +930,30 @@ model LiteLLM_DailyUserSpend {
   failed_requests             BigInt   @default(0)
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
+=======
+  id                  String   @id @default(uuid())
+  user_id             String? 
+  date                String
+  api_key             String   
+  model               String?
+  model_group         String?  
+  custom_llm_provider String?
+  mcp_namespaced_tool_name String?
+  endpoint               String?
+  prompt_tokens       BigInt      @default(0)
+  completion_tokens   BigInt      @default(0)
+  cache_read_input_tokens     BigInt      @default(0)
+  cache_creation_input_tokens BigInt      @default(0)
+  compression_saved_tokens    BigInt      @default(0)
+  compression_savings_spend    Float       @default(0.0)
+  prompt_caching_savings_spend Float       @default(0.0)
+  spend               Float    @default(0.0)
+  api_requests        BigInt      @default(0)
+  successful_requests BigInt      @default(0)
+  failed_requests     BigInt      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+>>>>>>> origin/litellm_internal_staging
 
   @@unique([user_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint])
   @@index([date])
@@ -704,6 +966,7 @@ model LiteLLM_DailyUserSpend {
 
 // Track daily organization spend metrics per model and key
 model LiteLLM_DailyOrganizationSpend {
+<<<<<<< HEAD
   id                          String   @id @default(uuid())
   organization_id             String?
   date                        String
@@ -723,6 +986,30 @@ model LiteLLM_DailyOrganizationSpend {
   failed_requests             BigInt   @default(0)
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
+=======
+  id                  String   @id @default(uuid())
+  organization_id     String?
+  date                String
+  api_key             String   
+  model               String?
+  model_group         String?  
+  custom_llm_provider String?
+  mcp_namespaced_tool_name String?
+  endpoint               String?
+  prompt_tokens       BigInt      @default(0)
+  completion_tokens   BigInt      @default(0)
+  cache_read_input_tokens     BigInt      @default(0)
+  cache_creation_input_tokens BigInt      @default(0)
+  compression_saved_tokens    BigInt      @default(0)
+  compression_savings_spend    Float       @default(0.0)
+  prompt_caching_savings_spend Float       @default(0.0)
+  spend               Float    @default(0.0)
+  api_requests        BigInt      @default(0)
+  successful_requests BigInt      @default(0)
+  failed_requests     BigInt      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+>>>>>>> origin/litellm_internal_staging
 
   @@unique([organization_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint])
   @@index([date])
@@ -735,6 +1022,7 @@ model LiteLLM_DailyOrganizationSpend {
 
 // Track daily end user (customer) spend metrics per model and key
 model LiteLLM_DailyEndUserSpend {
+<<<<<<< HEAD
   id                          String   @id @default(uuid())
   end_user_id                 String?
   date                        String
@@ -755,6 +1043,30 @@ model LiteLLM_DailyEndUserSpend {
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
 
+=======
+  id                  String   @id @default(uuid())
+  end_user_id         String?
+  date                String
+  api_key             String   
+  model               String?
+  model_group         String?  
+  custom_llm_provider String?
+  mcp_namespaced_tool_name String?
+  endpoint               String?
+  prompt_tokens       BigInt      @default(0)
+  completion_tokens   BigInt      @default(0)
+  cache_read_input_tokens     BigInt      @default(0)
+  cache_creation_input_tokens BigInt      @default(0)
+  compression_saved_tokens    BigInt      @default(0)
+  compression_savings_spend    Float       @default(0.0)
+  prompt_caching_savings_spend Float       @default(0.0)
+  spend               Float    @default(0.0)
+  api_requests        BigInt      @default(0)
+  successful_requests BigInt      @default(0)
+  failed_requests     BigInt      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+>>>>>>> origin/litellm_internal_staging
   @@unique([end_user_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint])
   @@index([date])
   @@index([end_user_id, date])
@@ -766,6 +1078,7 @@ model LiteLLM_DailyEndUserSpend {
 
 // Track daily agent spend metrics per model and key
 model LiteLLM_DailyAgentSpend {
+<<<<<<< HEAD
   id                          String   @id @default(uuid())
   agent_id                    String?
   date                        String
@@ -786,6 +1099,30 @@ model LiteLLM_DailyAgentSpend {
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
 
+=======
+  id                  String   @id @default(uuid())
+  agent_id            String?
+  date                String
+  api_key             String   
+  model               String?
+  model_group         String?  
+  custom_llm_provider String?
+  mcp_namespaced_tool_name String?
+  endpoint               String?
+  prompt_tokens       BigInt      @default(0)
+  completion_tokens   BigInt      @default(0)
+  cache_read_input_tokens     BigInt      @default(0)
+  cache_creation_input_tokens BigInt      @default(0)
+  compression_saved_tokens    BigInt      @default(0)
+  compression_savings_spend    Float       @default(0.0)
+  prompt_caching_savings_spend Float       @default(0.0)
+  spend               Float    @default(0.0)
+  api_requests        BigInt      @default(0)
+  successful_requests BigInt      @default(0)
+  failed_requests     BigInt      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+>>>>>>> origin/litellm_internal_staging
   @@unique([agent_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint])
   @@index([date])
   @@index([agent_id, date])
@@ -797,6 +1134,7 @@ model LiteLLM_DailyAgentSpend {
 
 // Track daily team spend metrics per model and key
 model LiteLLM_DailyTeamSpend {
+<<<<<<< HEAD
   id                          String   @id @default(uuid())
   team_id                     String?
   date                        String
@@ -816,6 +1154,30 @@ model LiteLLM_DailyTeamSpend {
   failed_requests             BigInt   @default(0)
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
+=======
+  id                  String   @id @default(uuid())
+  team_id             String?
+  date                String
+  api_key             String   
+  model               String?
+  model_group         String?  
+  custom_llm_provider String?
+  mcp_namespaced_tool_name String?
+  endpoint               String?
+  prompt_tokens       BigInt      @default(0)
+  completion_tokens   BigInt      @default(0)
+  cache_read_input_tokens     BigInt      @default(0)
+  cache_creation_input_tokens BigInt      @default(0)
+  compression_saved_tokens    BigInt      @default(0)
+  compression_savings_spend    Float       @default(0.0)
+  prompt_caching_savings_spend Float       @default(0.0)
+  spend               Float    @default(0.0)
+  api_requests        BigInt      @default(0)
+  successful_requests BigInt      @default(0)
+  failed_requests     BigInt      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+>>>>>>> origin/litellm_internal_staging
 
   @@unique([team_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint])
   @@index([date])
@@ -828,6 +1190,7 @@ model LiteLLM_DailyTeamSpend {
 
 // Track daily team spend metrics per model and key
 model LiteLLM_DailyTagSpend {
+<<<<<<< HEAD
   id                          String   @id @default(uuid())
   request_id                  String?
   tag                         String?
@@ -848,6 +1211,31 @@ model LiteLLM_DailyTagSpend {
   failed_requests             BigInt   @default(0)
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
+=======
+  id                  String   @id @default(uuid())
+  request_id          String?
+  tag                 String?   
+  date                String
+  api_key             String   
+  model               String?
+  model_group         String?  
+  custom_llm_provider String?
+  mcp_namespaced_tool_name String?
+  endpoint               String?
+  prompt_tokens       BigInt      @default(0)
+  completion_tokens   BigInt      @default(0)
+  cache_read_input_tokens     BigInt      @default(0)
+  cache_creation_input_tokens BigInt      @default(0)
+  compression_saved_tokens    BigInt      @default(0)
+  compression_savings_spend    Float       @default(0.0)
+  prompt_caching_savings_spend Float       @default(0.0)
+  spend               Float    @default(0.0)
+  api_requests        BigInt      @default(0)
+  successful_requests BigInt      @default(0)
+  failed_requests     BigInt      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+>>>>>>> origin/litellm_internal_staging
 
   @@unique([tag, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint])
   @@index([date])
@@ -1018,6 +1406,7 @@ model LiteLLM_SpendLogToolIndex {
 
   @@id([request_id, tool_name])
   @@index([tool_name, start_time])
+  @@index([start_time])
 }
 
 // Prompt table for storing prompt configurations

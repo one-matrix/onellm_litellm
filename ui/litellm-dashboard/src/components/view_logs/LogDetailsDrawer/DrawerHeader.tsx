@@ -2,6 +2,7 @@ import { Button, Space, Tag, Tooltip, Typography } from "antd";
 import { CloseOutlined, UpOutlined, DownOutlined } from "@ant-design/icons";
 import moment from "moment";
 import { LogEntry } from "../columns";
+import { AutoRouterTag } from "@/components/shared/table_cells";
 import { getProviderLogoAndName } from "../../provider_info_helpers";
 import {
   DRAWER_HEADER_PADDING,
@@ -55,10 +56,17 @@ export function DrawerHeader({
       }}
     >
       {/* Row 0: Model + Provider with Logo */}
-      <ModelProviderSection model={log.model} providerLogo={providerInfo?.logo} providerName={providerInfo?.displayName} />
+      <ModelProviderSection
+        model={log.model}
+        modelGroup={log.model_group}
+        providerLogo={providerInfo?.logo}
+        providerName={providerInfo?.displayName}
+      />
 
       {/* Row 1: Request ID + Actions */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: SPACING_MEDIUM }}>
+      <div
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: SPACING_MEDIUM }}
+      >
         <RequestIdSection requestId={log.request_id} />
         <NavigationSection onPrevious={onPrevious} onNext={onNext} onClose={onClose} />
       </div>
@@ -74,10 +82,12 @@ export function DrawerHeader({
  */
 function ModelProviderSection({
   model,
+  modelGroup,
   providerLogo,
   providerName,
 }: {
   model: string;
+  modelGroup?: string;
   providerLogo?: string;
   providerName?: string;
 }) {
@@ -103,6 +113,7 @@ function ModelProviderSection({
             {providerName}
           </Text>
         )}
+        <AutoRouterTag modelGroup={modelGroup} />
       </Space>
     </Space>
   );

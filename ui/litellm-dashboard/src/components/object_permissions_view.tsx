@@ -3,21 +3,10 @@ import { Text } from "@tremor/react";
 import VectorStorePermissions from "./permissions/VectorStorePermissions";
 import MCPServerPermissions from "./permissions/MCPServerPermissions";
 import AgentPermissions from "./permissions/AgentPermissions";
-
-interface ObjectPermission {
-  object_permission_id: string;
-  mcp_servers: string[];
-  mcp_access_groups?: string[];
-  mcp_tool_permissions?: Record<string, string[]>;
-  mcp_toolsets?: string[];
-  vector_stores: string[];
-  agents?: string[];
-  agent_access_groups?: string[];
-  search_tools?: string[];
-}
+import type { ObjectPermission } from "./object_permission_types";
 
 interface ObjectPermissionsViewProps {
-  objectPermission?: ObjectPermission;
+  objectPermission?: ObjectPermission | null;
   variant?: "card" | "inline";
   className?: string;
   accessToken?: string | null;
@@ -48,11 +37,7 @@ export function ObjectPermissionsView({
         mcpToolsets={mcpToolsets}
         accessToken={accessToken}
       />
-      <AgentPermissions
-        agents={agents}
-        agentAccessGroups={agentAccessGroups}
-        accessToken={accessToken}
-      />
+      <AgentPermissions agents={agents} agentAccessGroups={agentAccessGroups} accessToken={accessToken} />
       <div className="rounded-md border border-gray-100 p-4">
         <Text className="text-sm font-medium text-gray-800">Search tools</Text>
         {searchTools.length === 0 ? (
